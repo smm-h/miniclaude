@@ -7,3 +7,4 @@
 {"id":"18c1db0e3ae685ea6bb03c5345644461afcaf67602454b94","commits":["9610d86c6a59da06afb70f9492a2d14dceb7cb31"],"user_facing":false}
 {"id":"18c1db5f281e8b23efa0f2a7b2394a87a40c1d71c4894cdf","commits":["b195dc0b032851a18ebb3fb5b955330203250cfd"],"user_facing":false}
 {"id":"18c1db5f303a4890a4cf97068ea94cdb82a6cfcad04bf56f","commits":["4cd34a4d856ebcab9ddb6ac7c15cfefe0035e98c"],"user_facing":false}
+{"id":"18c1db645cb7f67c344563e6d9b348f78626256c3a5850d4","commits":["785874117c192fa60e9ea4d52e411a6b879aa8af"],"user_facing":true,"description":"**Rich streaming output.** Assistant prose and thinking now render live with markdown styling -- bold, italics, inline code, links, headers, bullet lists, fenced code blocks, and aligned tables -- streamed line-by-line as the response arrives.","type":"feature"}
