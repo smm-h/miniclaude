@@ -13,3 +13,4 @@
 {"id":"18c1dc3c2ac2a97512f589d8d634441c97fe4ebc2e34d446","commits":["b789dfb497063e7efe9ea74371851319a97052ab"],"user_facing":false}
 {"id":"18c1dce106015f210fefbca8023740cb9cb51e21f0ae3ae1","commits":["0df2da2d9cd82f94baa921a52d35c1745e476fd9"],"user_facing":true,"description":"**Failed tool calls now render as a red \u2717.** Previously every tool result showed as a dim success \u2713 regardless of outcome; errors are now visually distinct.","type":"fix"}
 {"id":"18c1dce398238549f99e8de891d24e128fb09fbcaec3d142","commits":["22a0499daa046858b00697c18cc79b62011289d9"],"user_facing":true,"description":"**Add your own answer to multi-select questions.** After picking option numbers on an AskUserQuestion multiSelect prompt, you can now type an extra free-text answer that is appended to your selections.","type":"feature"}
+{"id":"18c1de6ae2a4d5077df02e39604646a3adb8263e30d234aa","commits":["d712126c0a55fbfc211b72b9e5aff5b457d74d1c"],"user_facing":false}
