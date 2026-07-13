@@ -1,0 +1,1 @@
+{"id":"18c1ecdee7e5a00900d70d26ccb44c9b8b757175d98b9b12","commits":["9cbdef5d52b4f152458cdcc43b096f25bc73088f"],"user_facing":true,"description":"**Status bar.** A persistent one-line bottom toolbar shows model, mode, context %, cumulative cost, working spinner, and queued-line count.","type":"feature"}
