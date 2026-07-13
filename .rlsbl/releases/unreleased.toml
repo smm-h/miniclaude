@@ -1,9 +1,13 @@
 # Version bump type: patch, minor, major, hotfix, or prerelease
-bump = ""
+bump = "minor"
 # Short description of this release (required)
-description = ""
+description = "First release: lean, snappy inline terminal client for Claude Code."
 # Optional context explaining why these changes were made
-context = ""
+context = """
+Initial public release of miniclaude, built on top of claudestream. Provides a
+lean, snappy inline terminal client for Claude Code with dialog rendering, a REPL
+loop, and tool-line output handling. Distributed on both PyPI and npm.
+"""
 # Pre-release identifier: alpha, beta, rc, or stable
 # preid = ""
 # Set to true to generate a blog post for this release
