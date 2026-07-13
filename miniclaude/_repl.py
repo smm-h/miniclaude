@@ -17,7 +17,7 @@ The design splits cleanly into pure orchestration (unit-testable with a
 Layout:
   HSplit [
     Window(FormattedTextControl)   # scrollable output (weight=1)
-    Frame(Window(BufferControl))   # boxed input (height ~5)
+    Frame(Window(BufferControl))   # boxed input (dynamic, 1..10 lines)
     Window(FormattedTextControl)   # howmuchleft (height=3)
   ]
 
@@ -617,6 +617,7 @@ class _PromptController:
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.layout import (
             BufferControl,
+            Dimension,
             FormattedTextControl,
             HSplit,
             Layout,
@@ -661,7 +662,12 @@ class _PromptController:
             name="input",
         )
         input_control = BufferControl(buffer=input_buffer, focusable=True)
-        input_window = Window(content=input_control, height=5, wrap_lines=True)
+        input_window = Window(
+            content=input_control,
+            height=Dimension(min=1, max=10),
+            dont_extend_height=True,
+            wrap_lines=True,
+        )
         framed_input = Frame(body=input_window, title="")
 
         # --- howmuchleft region (status bar, bottom) ---
