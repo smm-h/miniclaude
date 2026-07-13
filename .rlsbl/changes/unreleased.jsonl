@@ -6,3 +6,4 @@
 {"id":"18c1db0d90d12b81df40661244064c9083a494757507e427","commits":["a5237bb73cc518c48bb044e9793d24e187be15f0"],"user_facing":true,"description":"**Compact tool activity.** Tool calls and results appear as dense one-line entries (a marker glyph, the tool name, and a concise per-tool argument summary), with subagent activity indented and errors highlighted in red.","type":"feature"}
 {"id":"18c1db0e3ae685ea6bb03c5345644461afcaf67602454b94","commits":["9610d86c6a59da06afb70f9492a2d14dceb7cb31"],"user_facing":false}
 {"id":"18c1db5f281e8b23efa0f2a7b2394a87a40c1d71c4894cdf","commits":["b195dc0b032851a18ebb3fb5b955330203250cfd"],"user_facing":false}
+{"id":"18c1db5f303a4890a4cf97068ea94cdb82a6cfcad04bf56f","commits":["4cd34a4d856ebcab9ddb6ac7c15cfefe0035e98c"],"user_facing":false}
