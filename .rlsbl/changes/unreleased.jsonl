@@ -1,1 +1,2 @@
 {"id":"18c1ecdee7e5a00900d70d26ccb44c9b8b757175d98b9b12","commits":["9cbdef5d52b4f152458cdcc43b096f25bc73088f"],"user_facing":true,"description":"**Status bar.** A persistent one-line bottom toolbar shows model, mode, context %, cumulative cost, working spinner, and queued-line count.","type":"feature"}
+{"id":"18c1ecdfe4ada50e6e75ceb295184d1082f98ae8d1f9423d","commits":["9cbdef5d52b4f152458cdcc43b096f25bc73088f"],"user_facing":true,"description":"**Fix.** Banner prints immediately at launch instead of waiting for the first turn.","type":"fix"}
