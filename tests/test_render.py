@@ -340,3 +340,38 @@ def test_table_header_bold_body_not() -> None:
 
 def test_blank_lines_preserved() -> None:
     assert _single("a\n\nb\n") == "a\n\nb\n"
+
+
+# -- display-width counting (emoji / wide chars) ----------------------------
+
+
+from miniclaude._render import _visible_len, _truncate_visible
+
+
+def test__visible_len_ascii() -> None:
+    assert _visible_len("hello") == 5
+
+
+def test__visible_len_emoji() -> None:
+    # Guitar emoji is East Asian Width = W, so 2 cells; "ab" = 2 cells => total 4.
+    assert _visible_len("\U0001f3b8ab") == 4
+
+
+def test__visible_len_ansi_stripped() -> None:
+    # ANSI escapes wrapping an emoji must not affect the width count.
+    styled = BOLD + "\U0001f3b8" + RESET + "x"
+    assert _visible_len(styled) == 3  # emoji=2, x=1
+
+
+def test__truncate_visible_emoji() -> None:
+    # String: emoji (2 cols) + "ab" (2 cols) = 4 cols total.
+    # Truncate to maxcols=3: only room for 2 visible cols before the ellipsis.
+    # The emoji takes 2 cols, which equals maxcols-1=2, so it fits; then ellipsis.
+    result = _truncate_visible("\U0001f3b8ab", 3)
+    plain = _strip_ansi(result)
+    assert plain == "\U0001f3b8…"
+    # Truncate to maxcols=2: only 1 col before the ellipsis; emoji needs 2, so it
+    # does not fit. Result is just the ellipsis.
+    result2 = _truncate_visible("\U0001f3b8ab", 2)
+    plain2 = _strip_ansi(result2)
+    assert plain2 == "…"

@@ -13,6 +13,7 @@ No terminal, no session, no side effects -- unit-testable in isolation.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # SGR codes.
 BOLD = "\033[1m"
@@ -35,16 +36,23 @@ def _strip_ansi(s: str) -> str:
     return _ANSI_RE.sub("", s)
 
 
+def _char_width(c: str) -> int:
+    """Display width of a single character: 2 for Wide/Fullwidth, 1 otherwise."""
+    eaw = unicodedata.east_asian_width(c)
+    return 2 if eaw in ("W", "F") else 1
+
+
 def _visible_len(styled: str) -> int:
-    """Number of visible columns in an ANSI-styled string (1 char = 1 cell)."""
-    return len(_strip_ansi(styled))
+    """Number of visible columns in an ANSI-styled string (wide chars = 2 cells)."""
+    return sum(_char_width(c) for c in _strip_ansi(styled))
 
 
 def _truncate_visible(styled: str, maxcols: int) -> str:
     """Truncate an ANSI-styled string to `maxcols` visible columns, ending with an ellipsis.
 
     ANSI escape sequences are preserved (never counted, never split); the result keeps
-    at most maxcols-1 visible chars plus a trailing ellipsis, then a RESET.
+    visible chars that fit within maxcols-1 columns plus a trailing ellipsis, then a RESET.
+    Characters that would cause the column count to exceed maxcols-1 are dropped.
     """
     if maxcols <= 0:
         return ""
@@ -58,10 +66,11 @@ def _truncate_visible(styled: str, maxcols: int) -> str:
             out.append(m.group(0))
             i = m.end()
             continue
-        if visible >= maxcols - 1:
+        cw = _char_width(styled[i])
+        if visible + cw > maxcols - 1:
             break
         out.append(styled[i])
-        visible += 1
+        visible += cw
         i += 1
     out.append("…")  # …
     out.append(RESET)
