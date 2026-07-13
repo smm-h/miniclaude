@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "schema_version": 1,
+    "app": {
+      "env_prefix": null,
+      "config": false,
+      "global_flags": [],
+      "commands": {},
+      "groups": {},
+      "deprecated": {},
+      "tag_contracts": {}
+    },
+    "flag": {
+      "short": null,
+      "default": null,
+      "env": null,
+      "choices": null,
+      "repeatable": false,
+      "unique": false,
+      "env_separator": null,
+      "negatable": null,
+      "hidden": false
+    },
+    "arg": {
+      "type": "str",
+      "required": true,
+      "default": null,
+      "variadic": false,
+      "choices": null
+    },
+    "command": {
+      "passthrough": false,
+      "flags": [],
+      "args": [],
+      "tags": [],
+      "constraints": [],
+      "hidden": false,
+      "interactive": false
+    },
+    "group": {
+      "commands": {},
+      "groups": {},
+      "deprecated": {},
+      "tags": [],
+      "hidden": false
+    }
+  },
+  "project_id": "miniclaude",
+  "name": "miniclaude",
+  "version": "0.1.0",
+  "help": "A lean, snappy inline terminal client for Claude Code",
+  "commands": {
+    "version": {
+      "name": "version",
+      "help": "Print the miniclaude version"
+    },
+    "repl": {
+      "name": "repl",
+      "help": "Start the interactive inline REPL",
+      "flags": [
+        {
+          "name": "profile",
+          "type": "str",
+          "help": "claudewheel profile to use (required)"
+        },
+        {
+          "name": "model",
+          "type": "str",
+          "help": "Model to use, e.g. sonnet, haiku (required)"
+        },
+        {
+          "name": "permission-mode",
+          "type": "str",
+          "help": "Permission mode (required)",
+          "choices": [
+            "default",
+            "acceptEdits",
+            "plan",
+            "bypassPermissions",
+            "dontAsk",
+            "auto"
+          ]
+        },
+        {
+          "name": "cwd",
+          "type": "str",
+          "help": "Working directory (default: current)",
+          "default": ""
+        },
+        {
+          "name": "resume",
+          "type": "str",
+          "help": "Resume a previous session by ID",
+          "default": ""
+        },
+        {
+          "name": "continue-session",
+          "type": "bool",
+          "help": "Continue the most recent session",
+          "default": false,
+          "negatable": true
+        }
+      ]
+    }
+  }
+}
