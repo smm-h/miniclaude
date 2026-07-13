@@ -6,6 +6,7 @@
     "miniclaude": "./bin/miniclaude.mjs"
   },
   "type": "module",
+  "license": "MIT",
   "keywords": [
     "claude",
     "claude-code",

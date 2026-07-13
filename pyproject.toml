@@ -3,6 +3,7 @@ name = "miniclaude"
 version = "0.1.0"
 description = "A lean, snappy inline terminal client for Claude Code"
 requires-python = ">=3.11"
+license = "MIT"
 dependencies = [
     "claudestream",
     "strictcli",
