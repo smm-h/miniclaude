@@ -1,0 +1,20 @@
+{
+  "targets": [
+    "pypi",
+    "npm"
+  ],
+  "pipelines": {
+    "pypi": {
+      "type": "pypi",
+      "local": false
+    },
+    "npm": {
+      "type": "npm",
+      "local": false,
+      "provenance": true
+    }
+  },
+  "private": false,
+  "push_timeout": 120,
+  "coverage_unit": "commit"
+}
