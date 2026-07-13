@@ -8,7 +8,7 @@ resolution-markers = [
 
 [[package]]
 name = "claudestream"
-version = "0.12.2"
+version = "0.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "claudewheel" },
@@ -17,9 +17,9 @@ dependencies = [
     { name = "selfdoc", version = "0.33.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "strictcli" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/ab/0023f957aa1d78206a5e2d663a98a57941cb38dcf3511342e1492feaddda/claudestream-0.12.2.tar.gz", hash = "sha256:d2c886de5726f5ad2c2223b43f22aa1e91570c863bad1a0a5f19a84336307b05", size = 185028, upload-time = "2026-06-04T18:52:37.48Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/8c/4a16e9491e578fbaf18e57626a639a010152694efd31c4a17f19e587a67b/claudestream-0.13.1.tar.gz", hash = "sha256:ca429575b855eb068921e56e0c418574820280110428cad0c542524ec0b67fea", size = 222501, upload-time = "2026-07-13T17:25:09.247Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/e2/0e4b4e13ae8e64dedf395d00900191997312a0bb1ec82f016de35ee8c34c/claudestream-0.12.2-py3-none-any.whl", hash = "sha256:d0d79563cd5c6ea7ef7e098291c1effa45a875271b357a547005d69da9240731", size = 47946, upload-time = "2026-06-04T18:52:36.059Z" },
+    { url = "https://files.pythonhosted.org/packages/12/bf/4e0b3ed73740aa980f6e376e91a83f6f63d68a326688b940b9bca1c37384/claudestream-0.13.1-py3-none-any.whl", hash = "sha256:3d5b3d4fdfc6a9b2e8558b774a81eadc3d17caf4503238588fb3228a41b56992", size = 53468, upload-time = "2026-07-13T17:25:07.81Z" },
 ]
 
 [[package]]
