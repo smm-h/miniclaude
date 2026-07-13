@@ -1,0 +1,23 @@
+{
+  "name": "miniclaude",
+  "version": "0.1.0",
+  "description": "A lean, snappy inline terminal client for Claude Code - CLI wrapper for the Python miniclaude package",
+  "bin": {
+    "miniclaude": "./bin/miniclaude.mjs"
+  },
+  "type": "module",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "cli",
+    "terminal",
+    "tui",
+    "rlsbl"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/"
+  ]
+}
