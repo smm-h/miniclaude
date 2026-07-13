@@ -605,6 +605,9 @@ class _PromptController:
         # Accumulated output text (raw ANSI). Appended by the printer.
         self._output_lines: list[str] = []
         self._app: Any | None = None
+        # Scroll-lock: track output size and user scroll state.
+        self._output_newline_count: int = 0
+        self._user_scrolled: bool = False
 
     def _build_app(self):
         from pathlib import Path
@@ -612,6 +615,7 @@ class _PromptController:
         from prompt_toolkit.application import Application
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
         from prompt_toolkit.buffer import Buffer
+        from prompt_toolkit.data_structures import Point
         from prompt_toolkit.formatted_text import ANSI
         from prompt_toolkit.history import FileHistory, ThreadedHistory
         from prompt_toolkit.key_binding import KeyBindings
@@ -635,7 +639,18 @@ class _PromptController:
         def _get_output_text():
             return ANSI("".join(self._output_lines))
 
-        output_control = FormattedTextControl(text=_get_output_text)
+        def _get_cursor_position() -> Point:
+            if self._user_scrolled:
+                # Pin the view where the user scrolled to.
+                return Point(x=0, y=output_window.vertical_scroll)
+            # Auto-follow: cursor at the last line so scroll keeps up.
+            return Point(x=0, y=self._output_newline_count)
+
+        output_control = FormattedTextControl(
+            text=_get_output_text,
+            show_cursor=False,
+            get_cursor_position=_get_cursor_position,
+        )
         output_window = Window(
             content=output_control,
             wrap_lines=True,
@@ -643,11 +658,23 @@ class _PromptController:
             allow_scroll_beyond_bottom=True,
         )
 
+        # Intercept scroll-up to engage scroll-lock (auto-follow pauses
+        # until the user submits input).
+        _original_scroll_up = output_window._scroll_up
+
+        def _patched_scroll_up() -> None:
+            self._user_scrolled = True
+            _original_scroll_up()
+
+        output_window._scroll_up = _patched_scroll_up
+
         # --- Input region (boxed, bottom) ---
         def _accept(buf: Buffer) -> bool:
             text = buf.text
             if not text.strip():
                 return False
+            # Resume auto-follow on input submission.
+            self._user_scrolled = False
             if self._repl.turn_active:
                 self._repl.notice_queued(text)
             self._repl._queue.put_nowait(text)
@@ -728,6 +755,7 @@ class _PromptController:
         """Append text to the output region (called as the Repl's printer)."""
         if text:
             self._output_lines.append(text)
+            self._output_newline_count += text.count("\n")
 
     async def run(
         self,
