@@ -7,16 +7,23 @@ The design splits cleanly into pure orchestration (unit-testable with a
   ``(session_factory, interaction, printer)`` so tests inject fakes. Event
   dispatch, slash-command parsing, the interrupt guard, and the result/status
   lines are all driven through those injected surfaces -- no terminal required.
-- :class:`_PromptController` is the production input surface: one reused
-  prompt_toolkit ``PromptSession`` running as a background asyncio task,
-  feeding submitted lines into an ``asyncio.Queue``. It implements the
-  type-ahead concurrency model (queue while a turn is active) and the
-  one-Application-at-a-time discipline: before a modal it suspends the prompt
-  (``app.exit`` with a sentinel, buffer text preserved) and resumes afterward.
+- :class:`_PromptController` is the production input surface: a fullscreen
+  prompt_toolkit ``Application`` with a three-region layout (scrollable output,
+  boxed input, howmuchleft status bar). It runs continuously; user input arrives
+  via the ``Buffer``'s ``accept_handler``. Modals (permission prompts,
+  AskUserQuestion) use ``in_terminal`` to briefly exit fullscreen, run the
+  existing _dialogs.py code unchanged, and return.
 
-Concurrency invariant: exactly one prompt_toolkit ``Application`` runs at any
-moment. The background prompt is suspended around every permission/dialog modal
-via :meth:`Repl._with_prompt_suspended`.
+Layout:
+  HSplit [
+    Window(FormattedTextControl)   # scrollable output (weight=1)
+    Frame(Window(BufferControl))   # boxed input (height ~5)
+    Window(FormattedTextControl)   # howmuchleft (height=3)
+  ]
+
+The Application uses ``full_screen=True`` (alternate screen -- preserves
+scrollback on exit) and ``color_depth=DEPTH_24_BIT`` (truecolor lossless --
+no quantization of howmuchleft's RGB escapes).
 """
 
 from __future__ import annotations
@@ -59,7 +66,7 @@ from miniclaude._dialogs import (
 from miniclaude._render import StreamRenderer
 from miniclaude._toolline import format_tool_result, format_tool_use
 
-# --- ANSI helpers (raw SGR for patch_stdout(raw=True)) -----------------------
+# --- ANSI helpers (raw SGR) ---------------------------------------------------
 
 RESET = "\x1b[0m"
 
@@ -270,6 +277,9 @@ class Repl:
             self._queue.put_nowait(None)
         except Exception:
             pass
+        # In production, also exit the fullscreen Application.
+        if self._input and self._input._app and self._input._app.is_running:
+            self._input._app.exit()
 
     def request_interrupt(self) -> None:
         """Interrupt the running turn (fire-and-forget, guarded against double-fire)."""
@@ -288,11 +298,11 @@ class Repl:
     # --- Production entry point ---
 
     def _invalidate(self) -> None:
-        if self._input and self._input._session.app.is_running:
-            self._input._session.app.invalidate()
+        if self._input and self._input._app and self._input._app.is_running:
+            self._input._app.invalidate()
 
     def _get_toolbar(self) -> str:
-        """Return howmuchleft output for the bottom toolbar (ANSI pass-through)."""
+        """Return howmuchleft output for the status bar (ANSI pass-through)."""
         ttl = 0.25 if self._turn_active else 1.0
         return self._hml_cache.get(
             self._model,
@@ -304,33 +314,30 @@ class Repl:
         )
 
     async def _refresh_loop(self) -> None:
-        """Invalidate the prompt ~4x/s while a turn is active to refresh howmuchleft."""
+        """Invalidate the app ~4x/s while a turn is active to refresh howmuchleft."""
         while self._turn_active:
             self._invalidate()
             await asyncio.sleep(0.25)
 
     async def run(self) -> None:
-        """Production run: real session, patch_stdout, concurrent prompt task."""
-        from prompt_toolkit.patch_stdout import patch_stdout
-
-        banner = _dim(f"miniclaude {self._version}")
-        self._printer(banner + RESET + "\n")
-
+        """Production run: fullscreen Application with output/input/status regions."""
         async with self._session_factory() as session:
             self._session = session
             self._input = _PromptController(self)
-            with patch_stdout(raw=True):
-                loop_task = asyncio.ensure_future(self._input.run_loop())
-                try:
-                    await self._main_loop(session)
-                finally:
-                    self._exit = True
-                    loop_task.cancel()
-                    try:
-                        await loop_task
-                    except BaseException:
-                        pass
-            self._printer(self._format_cost(session))
+            # Redirect the printer to the output region for the duration of
+            # the fullscreen app. The original printer is restored afterward
+            # so the cost summary prints to the real terminal.
+            orig_printer = self._printer
+            self._printer = self._input.printer
+            # Banner goes into the output window.
+            self._printer(_dim(f"miniclaude {self._version}") + RESET + "\n")
+            try:
+                await self._input.run(self._main_loop, session)
+            finally:
+                self._exit = True
+                self._printer = orig_printer
+            # Print cost summary after exiting fullscreen (back to normal terminal).
+            sys.stdout.write(self._format_cost(session))
 
     # --- Core loop ---
 
@@ -489,10 +496,11 @@ class Repl:
         # UnknownEvent / ControlResponse / anything else -> ignored.
 
     async def _with_prompt_suspended(self, coro: Awaitable[Any]) -> Any:
-        """Run a modal coroutine with the background prompt suspended.
+        """Run a modal coroutine with the fullscreen app temporarily suspended.
 
         In tests (no input controller) the coroutine simply runs. In production
-        the prompt is exited first so exactly one Application is live.
+        ``in_terminal`` briefly exits fullscreen so the modal's own inline
+        Application (ChoiceInput / PromptSession) can run without conflict.
         """
         if self._input is None:
             return await coro
@@ -575,41 +583,95 @@ class Repl:
         )
 
 
-# --- Production input controller (prompt_toolkit; inline, never full_screen) ---
-
-_SUSPEND = object()  # sentinel returned from prompt_async when parked for a modal
+# --- Production input controller (fullscreen prompt_toolkit Application) ------
 
 
 class _PromptController:
-    """One reused inline PromptSession run as a background task.
+    """Fullscreen Application with output/input/status regions.
 
-    Submitted lines flow into ``repl._queue``. While a turn is active a
-    submitted line is queued with a dim notice. Around a modal the prompt is
-    suspended (``app.exit(result=_SUSPEND)``) and resumed with the in-progress
-    buffer text preserved, guaranteeing one Application at a time.
+    The layout is an HSplit of three regions: a scrollable output window (top,
+    weight=1), a boxed input area (Frame around BufferControl, fixed height),
+    and a howmuchleft status bar (fixed height=3).
+
+    The Application runs continuously with ``full_screen=True`` (alternate
+    screen) and ``color_depth=DEPTH_24_BIT`` (truecolor, no quantization).
+
+    Submitted lines flow into ``repl._queue``. Modals use ``in_terminal``
+    to briefly exit fullscreen and run the existing _dialogs.py inline widgets.
     """
 
     def __init__(self, repl: Repl) -> None:
         self._repl = repl
-        self._running = True
-        self._preserved = ""
-        self._suspended = asyncio.Event()
-        self._resume = asyncio.Event()
-        self._session = self._build_session()
+        # Accumulated output text (raw ANSI). Appended by the printer.
+        self._output_lines: list[str] = []
+        self._app: Any | None = None
 
-    def _build_session(self):
+    def _build_app(self):
         from pathlib import Path
 
-        from prompt_toolkit import PromptSession
+        from prompt_toolkit.application import Application
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+        from prompt_toolkit.buffer import Buffer
         from prompt_toolkit.formatted_text import ANSI
         from prompt_toolkit.history import FileHistory, ThreadedHistory
         from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import (
+            BufferControl,
+            FormattedTextControl,
+            HSplit,
+            Layout,
+            ScrollOffsets,
+            Window,
+        )
+        from prompt_toolkit.output.color_depth import ColorDepth
+        from prompt_toolkit.widgets import Frame
 
         history_dir = Path.home() / ".miniclaude"
         history_dir.mkdir(parents=True, exist_ok=True)
         history = ThreadedHistory(FileHistory(str(history_dir / "history")))
 
+        # --- Output region (scrollable, top) ---
+        def _get_output_text():
+            return ANSI("".join(self._output_lines))
+
+        output_control = FormattedTextControl(text=_get_output_text)
+        output_window = Window(
+            content=output_control,
+            wrap_lines=True,
+            scroll_offsets=ScrollOffsets(bottom=0),
+            allow_scroll_beyond_bottom=True,
+        )
+
+        # --- Input region (boxed, bottom) ---
+        def _accept(buf: Buffer) -> bool:
+            text = buf.text
+            if not text.strip():
+                return False
+            if self._repl.turn_active:
+                self._repl.notice_queued(text)
+            self._repl._queue.put_nowait(text)
+            # Return False so the buffer is NOT kept (reset after accept).
+            return False
+
+        input_buffer = Buffer(
+            multiline=True,
+            history=history,
+            auto_suggest=AutoSuggestFromHistory(),
+            accept_handler=_accept,
+            name="input",
+        )
+        input_control = BufferControl(buffer=input_buffer, focusable=True)
+        input_window = Window(content=input_control, height=5, wrap_lines=True)
+        framed_input = Frame(body=input_window, title="")
+
+        # --- howmuchleft region (status bar, bottom) ---
+        def _get_hml_text():
+            return ANSI(self._repl._get_toolbar())
+
+        hml_control = FormattedTextControl(text=_get_hml_text)
+        hml_window = Window(content=hml_control, height=3)
+
+        # --- Key bindings ---
         kb = KeyBindings()
 
         @kb.add("enter")
@@ -635,64 +697,71 @@ class _PromptController:
         @kb.add("c-d")
         def _ctrl_d(event) -> None:
             if not event.current_buffer.text:
-                event.app.exit(exception=EOFError())
+                self._repl.request_exit()
+                event.app.exit()
 
-        def _toolbar():
-            return ANSI(self._repl._get_toolbar())
+        # --- Layout ---
+        root = HSplit([output_window, framed_input, hml_window])
+        layout = Layout(root, focused_element=input_buffer)
 
-        session = PromptSession(
-            multiline=True,
-            history=history,
-            auto_suggest=AutoSuggestFromHistory(),
+        app: Application = Application(
+            layout=layout,
             key_bindings=kb,
-            show_frame=True,
-            bottom_toolbar=_toolbar,
+            full_screen=True,
+            color_depth=ColorDepth.DEPTH_24_BIT,
+            # Refresh at ~4Hz so howmuchleft updates during turns and the
+            # output window picks up new printer() content without explicit
+            # invalidate() calls.
+            refresh_interval=0.25,
         )
         # Snappy lone-Esc resolution (default is 0.5s).
-        session.app.ttimeoutlen = 0.05
-        return session
+        app.ttimeoutlen = 0.05
+        return app
 
-    async def run_loop(self) -> None:
-        from prompt_toolkit.formatted_text import HTML
+    def printer(self, text: str) -> None:
+        """Append text to the output region (called as the Repl's printer)."""
+        if text:
+            self._output_lines.append(text)
 
-        prompt = HTML("<b>&gt; </b>")
-        continuation = ". "
-        while self._running:
+    async def run(
+        self,
+        main_loop: Callable[[Any], Awaitable[None]],
+        session: Any,
+    ) -> None:
+        """Build the Application, run the main loop as a background task, and
+        run the app. When either finishes (exit or EOFError), clean up."""
+        self._app = self._build_app()
+
+        async def _loop_wrapper() -> None:
             try:
-                text = await self._session.prompt_async(
-                    prompt,
-                    default=self._preserved,
-                    prompt_continuation=continuation,
-                )
-            except EOFError:
-                self._repl.request_exit()
-                return
-            except KeyboardInterrupt:
-                self._preserved = ""
-                continue
+                await main_loop(session)
+            finally:
+                # Main loop finished (e.g. /quit) -- make the app exit too.
+                if self._app and self._app.is_running:
+                    self._app.exit()
 
-            if text is _SUSPEND:
-                self._suspended.set()
-                await self._resume.wait()
-                self._resume.clear()
-                continue
+        loop_task = asyncio.ensure_future(_loop_wrapper())
 
-            self._preserved = ""
-            if not text.strip():
-                continue
-            if self._repl.turn_active:
-                self._repl.notice_queued(text)
-            await self._repl._queue.put(text)
+        try:
+            await self._app.run_async()
+        except EOFError:
+            self._repl.request_exit()
+        finally:
+            self._repl._exit = True
+            loop_task.cancel()
+            try:
+                await loop_task
+            except BaseException:
+                pass
 
     async def run_modal(self, coro: Awaitable[Any]) -> Any:
-        """Suspend the prompt, run ``coro``, then resume with buffer preserved."""
-        app = self._session.app
-        if app.is_running:
-            self._preserved = app.current_buffer.text
-            self._suspended.clear()
-            app.exit(result=_SUSPEND)
-            await self._suspended.wait()
-        try:
+        """Briefly exit fullscreen, run the modal coroutine, return to fullscreen.
+
+        Uses ``in_terminal`` which suspends the Application's rendering,
+        restores the normal terminal, runs the modal (which may create its own
+        inline Application via ChoiceInput/PromptSession), then resumes.
+        """
+        from prompt_toolkit.application import in_terminal
+
+        async with in_terminal():
             return await coro
-        finally:
-            self._resume.set()

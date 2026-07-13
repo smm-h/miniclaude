@@ -2,8 +2,13 @@
 
 Spawns the real CLI (`miniclaude repl`) inside a pseudo-terminal so
 prompt_toolkit has a genuine TTY, drives one turn against a live model, and
-verifies the response renders in scrollback. Marked ``integration`` so the
-default unit run (`pytest -m "not integration"`) skips it.
+verifies the response renders in the fullscreen Application's output region.
+Marked ``integration`` so the default unit run (`pytest -m "not integration"`)
+skips it.
+
+The REPL uses fullscreen mode (alternate screen). The test reads the raw
+byte stream from the pty master and checks for content within the
+fullscreen-rendered output (box-drawing chars, banner, model response).
 
 Requires a working claudewheel profile ("personal") and network access. On a
 sandboxed/offline machine this test will fail at the model turn -- that is a
@@ -71,18 +76,19 @@ def test_repl_pty_smoke():
 
     accum: list[str] = []
     try:
-        # Wait for the input prompt to appear (REPL is ready for input).
-        assert _read_until(master_fd, ">", _STARTUP_TIMEOUT, accum), (
-            f"REPL prompt never appeared. Output so far:\n{''.join(accum)}"
+        # Wait for the fullscreen app to render (Frame box-drawing char proves
+        # the Application is up and the input area is visible).
+        assert _read_until(master_fd, "┌", _STARTUP_TIMEOUT, accum), (
+            f"Fullscreen frame never appeared. Output so far:\n{''.join(accum)}"
         )
 
         # The marker "MINIOK" is asked for as MINI + OK so the literal token
         # never appears in our echoed input line -- only in the model's reply.
         os.write(master_fd, b"Reply with only the word MINI joined to OK, no space.\r")
 
-        # The SystemInit startup line proves the turn actually started.
+        # The banner is rendered inside the output window; verify it shows up.
         assert _read_until(master_fd, "miniclaude", 60.0, accum), (
-            f"startup line never rendered. Output:\n{''.join(accum)}"
+            f"banner never rendered. Output:\n{''.join(accum)}"
         )
         got = _read_until(master_fd, "MINIOK", _TURN_TIMEOUT, accum)
         output = "".join(accum)
