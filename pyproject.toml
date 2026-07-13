@@ -23,3 +23,8 @@ dev = [
     "pytest",
     "pytest-timeout",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: end-to-end tests that spawn a real Claude CLI in a pty (slow, network)",
+]
