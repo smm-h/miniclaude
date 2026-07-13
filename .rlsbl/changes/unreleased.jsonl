@@ -8,3 +8,4 @@
 {"id":"18c1db5f281e8b23efa0f2a7b2394a87a40c1d71c4894cdf","commits":["b195dc0b032851a18ebb3fb5b955330203250cfd"],"user_facing":false}
 {"id":"18c1db5f303a4890a4cf97068ea94cdb82a6cfcad04bf56f","commits":["4cd34a4d856ebcab9ddb6ac7c15cfefe0035e98c"],"user_facing":false}
 {"id":"18c1db645cb7f67c344563e6d9b348f78626256c3a5850d4","commits":["785874117c192fa60e9ea4d52e411a6b879aa8af"],"user_facing":true,"description":"**Rich streaming output.** Assistant prose and thinking now render live with markdown styling -- bold, italics, inline code, links, headers, bullet lists, fenced code blocks, and aligned tables -- streamed line-by-line as the response arrives.","type":"feature"}
+{"id":"18c1db64f0adecb16a6b2abf413f44eea5d1549c178dbe2d","commits":["5372e4b9d982e4531c36a089cbdb9ae77bb75a78"],"user_facing":false}
