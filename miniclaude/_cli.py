@@ -108,6 +108,8 @@ def cmd_repl(
         printer=_printer,
         version=_get_version(),
         width=width,
+        model=model,
+        permission_mode=permission_mode,
     )
     asyncio.run(repl.run())
     return None

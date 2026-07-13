@@ -19,6 +19,7 @@ from claudestream import (
     ContextCategory,
     ContextUsage,
     PermissionRequest,
+    RateLimit,
     Result,
     StreamDelta,
     SystemInit,
@@ -28,7 +29,7 @@ from claudestream import (
     UserDialogRequest,
 )
 
-from miniclaude._repl import Repl, _ctx_pct
+from miniclaude._repl import Repl, _ctx_pct, build_status_line
 
 
 def sync(fn):
@@ -324,9 +325,13 @@ async def test_system_init_prints_startup_line_once():
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
-    assert plain.count("miniclaude 9.9.9") == 1
-    assert "haiku" in plain
+    # Banner ("miniclaude 9.9.9") prints in run(), not in _run_turn.
+    assert "miniclaude 9.9.9" not in plain
+    # SystemInit prints cwd + session id (once despite two events).
+    assert plain.count("/proj") == 1
     assert "sess-1" in plain
+    # Echo line appears.
+    assert "> hi" in plain
 
 
 # --- Permission flow ---------------------------------------------------------
@@ -536,3 +541,139 @@ async def test_turn_error_does_not_kill_repl():
     await repl._run_turn(fake, "hi")  # must not raise
     assert "kaboom" in _plain(printer.text)
     assert repl._turn_active is False
+
+
+# --- build_status_line -------------------------------------------------------
+
+
+def test_build_status_line_empty_state():
+    assert build_status_line({}, 80) == ""
+
+
+def test_build_status_line_full_state():
+    state = {
+        "model": "haiku",
+        "mode": "default",
+        "ctx_pct": 42,
+        "cost": 0.1234,
+        "working": "* 3s",
+        "queued": 2,
+    }
+    line = build_status_line(state, 200)
+    assert "haiku" in line
+    assert "default" in line
+    assert "ctx 42%" in line
+    assert "$0.1234" in line
+    assert "* 3s" in line
+    assert "queued: 2" in line
+
+
+def test_build_status_line_skips_empty_segments():
+    state = {"model": "haiku", "mode": "", "ctx_pct": None, "cost": None, "queued": 0}
+    line = build_status_line(state, 200)
+    assert line == "haiku"
+
+
+def test_build_status_line_truncates_when_narrow():
+    state = {"model": "very-long-model-name", "mode": "bypassPermissions", "ctx_pct": 99}
+    line = build_status_line(state, 20)
+    assert len(line) == 20
+    assert line.endswith("…")
+
+
+# --- Banner not repeated by SystemInit ---------------------------------------
+
+
+@sync
+async def test_banner_not_repeated_by_system_init():
+    """After SystemInit, the banner string is NOT printed in the turn output."""
+    init = SystemInit(
+        type="system", cwd="/proj", model="haiku",
+        permission_mode="default", session_id="sess-1",
+    )
+    fake = FakeSession(scripts=[[init, _result()]])
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    plain = _plain(printer.text)
+    assert "miniclaude" not in plain
+    assert "/proj" in plain
+    assert "sess-1" in plain
+
+
+# --- RateLimit filtering -----------------------------------------------------
+
+
+@sync
+async def test_rate_limit_allowed_is_suppressed():
+    """Allowed with low utilization -> nothing printed."""
+    rl = RateLimit(type="system", status="allowed", rate_limit_type="tokens", utilization=0.0)
+    fake = FakeSession(scripts=[[rl, _result()]])
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    plain = _plain(printer.text)
+    assert "rate limit" not in plain
+
+
+@sync
+async def test_rate_limit_high_utilization_is_shown():
+    """Allowed with high utilization (>=0.8) -> printed."""
+    rl = RateLimit(type="system", status="allowed", rate_limit_type="tokens", utilization=0.9)
+    fake = FakeSession(scripts=[[rl, _result()]])
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    plain = _plain(printer.text)
+    assert "rate limit: allowed" in plain
+    assert "90%" in plain
+
+
+@sync
+async def test_rate_limit_not_allowed_is_shown():
+    """Non-allowed status (e.g. throttled) -> always printed."""
+    rl = RateLimit(type="system", status="throttled", rate_limit_type="tokens", utilization=0.5)
+    fake = FakeSession(scripts=[[rl, _result()]])
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    plain = _plain(printer.text)
+    assert "rate limit: throttled" in plain
+
+
+# --- Echo line ----------------------------------------------------------------
+
+
+@sync
+async def test_echo_appears_in_output():
+    """After _run_turn, the user's input is echoed dimmed."""
+    fake = FakeSession(scripts=[[_result()]])
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    plain = _plain(printer.text)
+    assert "> hi" in plain
+    # Verify it is dim (ANSI SGR 2).
+    assert "\x1b[2m> hi" in printer.text
+
+
+# --- Result updates status dict -----------------------------------------------
+
+
+@sync
+async def test_result_updates_status():
+    """After a Result event, the status dict has cost and ctx_pct set."""
+    result = _result(
+        total_cost_usd=0.05,
+        duration_ms=1000,
+        num_turns=1,
+        model_usage={
+            "haiku": {
+                "contextWindow": 1000,
+                "inputTokens": 200,
+                "cacheReadInputTokens": 50,
+                "cacheCreationInputTokens": 0,
+            }
+        },
+    )
+    fake = FakeSession(scripts=[[result]])
+    fake.total_cost_usd = 0.05
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    assert repl._status["cost"] == 0.05
+    assert repl._status["ctx_pct"] == 25  # (200+50)/1000 = 25%

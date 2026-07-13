@@ -121,6 +121,38 @@ _HELP_LINES = [
 ]
 
 
+def build_status_line(state: dict, width: int) -> str:
+    """Build the one-line status bar from a state dict. Pure, unit-testable.
+
+    Segments: model, mode, ctx%, cost, working state, queued count.
+    Empty/None segments are skipped. Truncates gracefully.
+    """
+    parts: list[str] = []
+    if state.get("model"):
+        parts.append(state["model"])
+    if state.get("mode"):
+        parts.append(state["mode"])
+    ctx = state.get("ctx_pct")
+    if ctx is not None:
+        parts.append(f"ctx {ctx}%")
+    cost = state.get("cost")
+    if cost is not None:
+        parts.append(f"${cost:.4f}")
+    working = state.get("working")
+    if working:
+        parts.append(working)
+    queued = state.get("queued", 0)
+    if queued:
+        parts.append(f"queued: {queued}")
+    line = " · ".join(parts)
+    if len(line) > width:
+        line = line[: width - 1] + "…"
+    return line
+
+
+_SPINNER = "⣋⣙⣹⣸⣴⣦⣧⣣"
+
+
 class Repl:
     """The turn loop. Pure orchestration over injected session/interaction/printer.
 
@@ -138,6 +170,8 @@ class Repl:
         *,
         version: str = "",
         width: int = 80,
+        model: str = "",
+        permission_mode: str = "",
     ) -> None:
         self._session_factory = session_factory
         self._interaction = interaction
@@ -156,6 +190,17 @@ class Repl:
         self._startup_printed = False
         self._exit = False
 
+        self._status: dict = {
+            "model": model,
+            "mode": permission_mode,
+            "ctx_pct": None,
+            "cost": None,
+            "working": None,
+            "queued": 0,
+        }
+        self._spinner_idx = 0
+        self._turn_start: float = 0.0
+
     # --- Public state used by the input controller ---
 
     @property
@@ -166,6 +211,8 @@ class Repl:
         """Print the dim ``queued: ...`` notice when a line is typed mid-turn."""
         snippet = " ".join(text.strip().split())[:40]
         self._printer(_dim(f"queued: {snippet}") + "\n")
+        self._status["queued"] = self._queue.qsize() + 1
+        self._invalidate()
 
     def request_exit(self) -> None:
         """Ask the main loop to stop; unblock it with a sentinel."""
@@ -191,9 +238,36 @@ class Repl:
 
     # --- Production entry point ---
 
+    def _invalidate(self) -> None:
+        if self._input and self._input._session.app.is_running:
+            self._input._session.app.invalidate()
+
+    def _get_toolbar(self) -> str:
+        return build_status_line(self._status, self._width)
+
+    async def _spinner_loop(self) -> None:
+        """Update the spinner ~4x/s while a turn is active."""
+        import time
+
+        while self._turn_active:
+            elapsed = time.monotonic() - self._turn_start
+            self._spinner_idx = (self._spinner_idx + 1) % len(_SPINNER)
+            self._status["working"] = f"{_SPINNER[self._spinner_idx]} {elapsed:.0f}s"
+            self._invalidate()
+            await asyncio.sleep(0.25)
+        self._status["working"] = None
+        self._invalidate()
+
     async def run(self) -> None:
         """Production run: real session, patch_stdout, concurrent prompt task."""
         from prompt_toolkit.patch_stdout import patch_stdout
+
+        banner = _dim(
+            f"miniclaude {self._version}"
+            + (f" · {self._status['model']}" if self._status["model"] else "")
+            + (f" · {self._status['mode']}" if self._status["mode"] else "")
+        )
+        self._printer(banner + RESET + "\n")
 
         async with self._session_factory() as session:
             self._session = session
@@ -223,9 +297,20 @@ class Repl:
             await self._run_turn(session, line)
 
     async def _run_turn(self, session: Any, prompt: str) -> None:
+        import time
+
         self._renderer = StreamRenderer(self._width)
         self._turn_active = True
         self._interrupt_pending = False
+        self._turn_start = time.monotonic()
+        self._status["queued"] = self._queue.qsize()
+        spinner_task: asyncio.Task | None = None
+        if self._input:
+            spinner_task = asyncio.ensure_future(self._spinner_loop())
+        # Echo the user's input into scrollback
+        lines = prompt.strip().splitlines()
+        echo = lines[0][:100] + ("…" if len(lines) > 1 or len(lines[0]) > 100 else "")
+        self._printer(_dim(f"> {echo}") + "\n")
         try:
             async for event in session.send(prompt):
                 await self._dispatch(session, event)
@@ -237,6 +322,15 @@ class Repl:
             self._printer(self._renderer.finish())
             self._turn_active = False
             self._interrupt_pending = False
+            self._status["working"] = None
+            self._status["queued"] = 0
+            if spinner_task:
+                spinner_task.cancel()
+                try:
+                    await spinner_task
+                except BaseException:
+                    pass
+            self._invalidate()
 
     # --- Event dispatch ---
 
@@ -299,6 +393,11 @@ class Repl:
             p(r.finish())
             self._interrupt_pending = False
             p(self._format_result_line(session, event))
+            self._status["cost"] = session.total_cost_usd
+            pct = _ctx_pct(event.model_usage, getattr(session, "model_name", None))
+            if pct is not None:
+                self._status["ctx_pct"] = pct
+            self._invalidate()
             return
 
         if isinstance(event, ApiRetry):
@@ -306,7 +405,14 @@ class Repl:
             return
 
         if isinstance(event, RateLimit):
-            p(_yellow(f"rate limit: {event.status} ({event.rate_limit_type})") + "\n")
+            if event.status != "allowed" or getattr(event, "utilization", 0) >= 0.8:
+                parts = [f"rate limit: {event.status}"]
+                if event.rate_limit_type:
+                    parts.append(event.rate_limit_type)
+                util = getattr(event, "utilization", None)
+                if util is not None and util > 0:
+                    parts.append(f"{util:.0%}")
+                p(_yellow(" · ".join(parts)) + "\n")
             return
 
         if isinstance(event, BudgetThreshold):
@@ -324,16 +430,17 @@ class Repl:
             return
 
         if isinstance(event, SystemInit):
+            self._status["model"] = event.model or self._status["model"]
+            self._status["mode"] = event.permission_mode or self._status["mode"]
             if not self._startup_printed:
                 self._startup_printed = True
                 p(
                     _dim(
-                        f"miniclaude {self._version} · {event.model} · "
-                        f"{event.permission_mode} · {event.cwd} · "
-                        f"session {event.session_id or ''}"
+                        f"{event.cwd} · session {event.session_id or ''}"
                     )
                     + "\n"
                 )
+            self._invalidate()
             return
 
         # UnknownEvent / ControlResponse / anything else -> ignored.
@@ -491,6 +598,7 @@ class _PromptController:
             history=history,
             auto_suggest=AutoSuggestFromHistory(),
             key_bindings=kb,
+            bottom_toolbar=lambda: self._repl._get_toolbar(),
         )
         # Snappy lone-Esc resolution (default is 0.5s).
         session.app.ttimeoutlen = 0.05
