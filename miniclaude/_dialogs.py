@@ -302,7 +302,8 @@ async def _ask_one_question(
     """Ask a single AskUserQuestion question; return the resolved answer.
 
     Single-select returns the chosen label (or free text for "Other"); multiSelect
-    returns a list of chosen labels.
+    returns a list of chosen labels, with an optional free-text answer appended when
+    the user supplies one.
     """
     printer(_bold(str(question.get("question", ""))) + "\n")
     options = question.get("options", []) or []
@@ -314,7 +315,11 @@ async def _ask_one_question(
             raw = await interaction.ask_text("Select (comma-separated numbers): ")
             idxs = parse_multiselect(raw, len(options))
             if idxs is not None:
-                return [labels[i] for i in idxs]
+                selected = [labels[i] for i in idxs]
+                extra = await interaction.ask_text("Add your own (optional, blank to skip): ")
+                if extra and extra.strip():
+                    selected.append(extra.strip())
+                return selected
             printer(_dim("Invalid selection; enter option numbers like 1,3.") + "\n")
 
     menu: list[tuple[Any, Any]] = [

@@ -435,10 +435,24 @@ async def test_question_flow_multiselect():
          "multiSelect": True},
     ])
     session = FakeSession()
-    interaction = FakeInteraction(texts=["1, 3"])
+    interaction = FakeInteraction(texts=["1, 3", ""])
     await run_question_flow(req, session, interaction, ListPrinter())
     _, _, updated, _ = session.calls[0]
     assert updated["answers"] == {"Pick some": "Red, Green"}
+
+
+@sync
+async def test_question_flow_multiselect_with_free_text():
+    req = _question_req([
+        {"question": "Pick some",
+         "options": [{"label": "Red"}, {"label": "Blue"}, {"label": "Green"}],
+         "multiSelect": True},
+    ])
+    session = FakeSession()
+    interaction = FakeInteraction(texts=["1", "Purple too"])
+    await run_question_flow(req, session, interaction, ListPrinter())
+    _, _, updated, _ = session.calls[0]
+    assert updated["answers"] == {"Pick some": "Red, Purple too"}
 
 
 @sync
@@ -448,7 +462,7 @@ async def test_question_flow_multiselect_reasks_on_garbage():
          "multiSelect": True},
     ])
     session = FakeSession()
-    interaction = FakeInteraction(texts=["nonsense", "2"])
+    interaction = FakeInteraction(texts=["nonsense", "2", ""])
     printer = ListPrinter()
     await run_question_flow(req, session, interaction, printer)
     _, _, updated, _ = session.calls[0]
