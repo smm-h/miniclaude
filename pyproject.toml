@@ -12,6 +12,11 @@ dependencies = [
 ]
 keywords = ["rlsbl"]
 
+[project.urls]
+Homepage = "https://github.com/smm-h/miniclaude"
+Repository = "https://github.com/smm-h/miniclaude"
+Issues = "https://github.com/smm-h/miniclaude/issues"
+
 [project.scripts]
 miniclaude = "miniclaude._cli:main"
 

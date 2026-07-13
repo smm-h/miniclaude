@@ -7,6 +7,14 @@
   },
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smm-h/miniclaude"
+  },
+  "homepage": "https://github.com/smm-h/miniclaude#readme",
+  "bugs": {
+    "url": "https://github.com/smm-h/miniclaude/issues"
+  },
   "keywords": [
     "claude",
     "claude-code",
