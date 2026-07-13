@@ -29,7 +29,13 @@ from claudestream import (
     UserDialogRequest,
 )
 
-from miniclaude._repl import Repl, _ctx_pct, build_status_line
+from miniclaude._repl import (
+    Repl,
+    _HowMuchLeftCache,
+    _ctx_pct,
+    _HOWMUCHLEFT_NOT_FOUND,
+    render_howmuchleft,
+)
 
 
 def sync(fn):
@@ -543,42 +549,179 @@ async def test_turn_error_does_not_kill_repl():
     assert repl._turn_active is False
 
 
-# --- build_status_line -------------------------------------------------------
+# --- render_howmuchleft ------------------------------------------------------
 
 
-def test_build_status_line_empty_state():
-    assert build_status_line({}, 80) == ""
+def test_render_howmuchleft_missing_binary(monkeypatch):
+    """When howmuchleft is not found, return the fallback message."""
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    result = render_howmuchleft("haiku", 10.0, "/tmp", 0.05)
+    assert result == _HOWMUCHLEFT_NOT_FOUND
+    assert result.count("\n") == 2  # 3 lines joined by 2 newlines
 
 
-def test_build_status_line_full_state():
-    state = {
-        "model": "haiku",
-        "mode": "default",
-        "ctx_pct": 42,
-        "cost": 0.1234,
-        "working": "* 3s",
-        "queued": 2,
-    }
-    line = build_status_line(state, 200)
-    assert "haiku" in line
-    assert "default" in line
-    assert "ctx 42%" in line
-    assert "$0.1234" in line
-    assert "* 3s" in line
-    assert "queued: 2" in line
+def test_render_howmuchleft_subprocess_json(monkeypatch):
+    """Verify the JSON piped to howmuchleft has the expected shape."""
+    import json
+    import subprocess
+
+    captured_input = {}
+
+    def fake_run(cmd, *, input, capture_output, text, timeout):
+        captured_input["json"] = json.loads(input)
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = "line1\nline2\nline3\n"
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/howmuchleft")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = render_howmuchleft("haiku", 25.0, "/proj", 0.1234)
+    assert result == "line1\nline2\nline3"
+
+    j = captured_input["json"]
+    assert j["model"] == "haiku"
+    assert j["context_window"] == {"used_percentage": 25.0}
+    assert j["cwd"] == "/proj"
+    assert j["cost"] == {"total_cost_usd": 0.1234}
 
 
-def test_build_status_line_skips_empty_segments():
-    state = {"model": "haiku", "mode": "", "ctx_pct": None, "cost": None, "queued": 0}
-    line = build_status_line(state, 200)
-    assert line == "haiku"
+def test_render_howmuchleft_no_ctx_pct(monkeypatch):
+    """When ctx_pct is None, context_window is an empty dict."""
+    import json
+    import subprocess
+
+    captured_input = {}
+
+    def fake_run(cmd, *, input, capture_output, text, timeout):
+        captured_input["json"] = json.loads(input)
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = "a\nb\nc\n"
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/howmuchleft")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    render_howmuchleft("haiku", None, "/proj", 0.0)
+    assert captured_input["json"]["context_window"] == {}
 
 
-def test_build_status_line_truncates_when_narrow():
-    state = {"model": "very-long-model-name", "mode": "bypassPermissions", "ctx_pct": 99}
-    line = build_status_line(state, 20)
-    assert len(line) == 20
-    assert line.endswith("…")
+def test_render_howmuchleft_timeout_returns_fallback(monkeypatch):
+    """On subprocess timeout, return the fallback message."""
+    import subprocess
+
+    def fake_run(cmd, *, input, capture_output, text, timeout):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/howmuchleft")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = render_howmuchleft("haiku", 10.0, "/tmp", 0.0)
+    assert result == _HOWMUCHLEFT_NOT_FOUND
+
+
+def test_render_howmuchleft_with_rate_limits(monkeypatch):
+    """rate_limits are passed through when provided."""
+    import json
+    import subprocess
+
+    captured_input = {}
+
+    def fake_run(cmd, *, input, capture_output, text, timeout):
+        captured_input["json"] = json.loads(input)
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = "a\nb\nc\n"
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/howmuchleft")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    rl = {"five_hour": {"used_percentage": 50.0}}
+    render_howmuchleft("haiku", 10.0, "/tmp", 0.0, rate_limits=rl)
+    assert captured_input["json"]["rate_limits"] == rl
+
+
+# --- _HowMuchLeftCache -------------------------------------------------------
+
+
+def test_hml_cache_returns_cached_within_ttl(monkeypatch):
+    """Within the TTL, the cache returns the previous result without re-invoking."""
+    import subprocess
+
+    call_count = 0
+
+    def fake_run(cmd, *, input, capture_output, text, timeout):
+        nonlocal call_count
+        call_count += 1
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = f"call{call_count}\nline2\nline3\n"
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/howmuchleft")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    cache = _HowMuchLeftCache()
+    r1 = cache.get("haiku", None, "/tmp", 0.0, None, ttl=10.0)
+    assert "call1" in r1
+    r2 = cache.get("haiku", None, "/tmp", 0.0, None, ttl=10.0)
+    assert r2 == r1  # cached, not re-invoked
+    assert call_count == 1
+
+
+def test_hml_cache_refreshes_after_ttl(monkeypatch):
+    """After TTL expires, the cache re-invokes howmuchleft."""
+    import subprocess
+
+    call_count = 0
+
+    def fake_run(cmd, *, input, capture_output, text, timeout):
+        nonlocal call_count
+        call_count += 1
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = f"call{call_count}\nline2\nline3\n"
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/howmuchleft")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    cache = _HowMuchLeftCache()
+    r1 = cache.get("haiku", None, "/tmp", 0.0, None, ttl=0.0)  # ttl=0 => always stale
+    r2 = cache.get("haiku", None, "/tmp", 0.0, None, ttl=0.0)
+    assert call_count == 2
+    assert "call1" in r1
+    assert "call2" in r2
+
+
+def test_hml_cache_fallback_on_error(monkeypatch):
+    """On error after a successful call, the cache returns the last good output."""
+    import subprocess
+
+    call_count = 0
+
+    def fake_run(cmd, *, input, capture_output, text, timeout):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            result = subprocess.CompletedProcess(cmd, 0)
+            result.stdout = "good\nline2\nline3\n"
+            result.stderr = ""
+            return result
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/howmuchleft")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    cache = _HowMuchLeftCache()
+    r1 = cache.get("haiku", None, "/tmp", 0.0, None, ttl=0.0)
+    assert "good" in r1
+    r2 = cache.get("haiku", None, "/tmp", 0.0, None, ttl=0.0)
+    # Should return cached "good" result, not the fallback
+    assert "good" in r2
 
 
 # --- Banner not repeated by SystemInit ---------------------------------------
@@ -652,12 +795,12 @@ async def test_echo_appears_in_output():
     assert "\x1b[2m> hi" in printer.text
 
 
-# --- Result updates status dict -----------------------------------------------
+# --- Result updates howmuchleft state -----------------------------------------
 
 
 @sync
-async def test_result_updates_status():
-    """After a Result event, the status dict has cost and ctx_pct set."""
+async def test_result_updates_hml_state():
+    """After a Result event, the howmuchleft state fields are updated."""
     result = _result(
         total_cost_usd=0.05,
         duration_ms=1000,
@@ -675,5 +818,5 @@ async def test_result_updates_status():
     fake.total_cost_usd = 0.05
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
-    assert repl._status["cost"] == 0.05
-    assert repl._status["ctx_pct"] == 25  # (200+50)/1000 = 25%
+    assert repl._cost_usd == 0.05
+    assert repl._ctx_pct == 25  # (200+50)/1000 = 25%

@@ -22,7 +22,12 @@ via :meth:`Repl._with_prompt_suspended`.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import shutil
+import subprocess
 import sys
+import time
 from typing import Any, Awaitable, Callable
 
 from claudestream import (
@@ -121,36 +126,83 @@ _HELP_LINES = [
 ]
 
 
-def build_status_line(state: dict, width: int) -> str:
-    """Build the one-line status bar from a state dict. Pure, unit-testable.
+# --- howmuchleft integration -------------------------------------------------
 
-    Segments: model, mode, ctx%, cost, working state, queued count.
-    Empty/None segments are skipped. Truncates gracefully.
+_HOWMUCHLEFT_NOT_FOUND = (
+    "howmuchleft not installed\nhowmuchleft not installed\nhowmuchleft not installed"
+)
+
+_HML_TIMEOUT = 0.5  # seconds
+
+
+def render_howmuchleft(
+    model: str,
+    ctx_pct: float | None,
+    cwd: str,
+    cost_usd: float,
+    rate_limits: dict | None = None,
+) -> str:
+    """Spawn howmuchleft and return 3 lines of ANSI status text.
+
+    Caches the result for ``cache_ttl`` seconds. On timeout or error, returns
+    the last successful output (or a fallback message).
     """
-    parts: list[str] = []
-    if state.get("model"):
-        parts.append(state["model"])
-    if state.get("mode"):
-        parts.append(state["mode"])
-    ctx = state.get("ctx_pct")
-    if ctx is not None:
-        parts.append(f"ctx {ctx}%")
-    cost = state.get("cost")
-    if cost is not None:
-        parts.append(f"${cost:.4f}")
-    working = state.get("working")
-    if working:
-        parts.append(working)
-    queued = state.get("queued", 0)
-    if queued:
-        parts.append(f"queued: {queued}")
-    line = " · ".join(parts)
-    if len(line) > width:
-        line = line[: width - 1] + "…"
-    return line
+    binary = shutil.which("howmuchleft")
+    if binary is None:
+        return _HOWMUCHLEFT_NOT_FOUND
+
+    stdin_data: dict[str, Any] = {
+        "model": model or "?",
+        "cwd": cwd or os.getcwd(),
+        "cost": {"total_cost_usd": cost_usd},
+    }
+    if ctx_pct is not None:
+        stdin_data["context_window"] = {"used_percentage": float(ctx_pct)}
+    else:
+        stdin_data["context_window"] = {}
+    if rate_limits:
+        stdin_data["rate_limits"] = rate_limits
+
+    try:
+        proc = subprocess.run(
+            [binary],
+            input=json.dumps(stdin_data),
+            capture_output=True,
+            text=True,
+            timeout=_HML_TIMEOUT,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.rstrip("\n")
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return _HOWMUCHLEFT_NOT_FOUND
 
 
-_SPINNER = "⣋⣙⣹⣸⣴⣦⣧⣣"
+class _HowMuchLeftCache:
+    """Time-based cache for howmuchleft output. Thread/coroutine safe enough
+    for single-writer (the refresh loop) usage."""
+
+    def __init__(self) -> None:
+        self._cached: str = ""
+        self._last_time: float = 0.0
+
+    def get(
+        self,
+        model: str,
+        ctx_pct: float | None,
+        cwd: str,
+        cost_usd: float,
+        rate_limits: dict | None,
+        ttl: float,
+    ) -> str:
+        now = time.monotonic()
+        if self._cached and (now - self._last_time) < ttl:
+            return self._cached
+        result = render_howmuchleft(model, ctx_pct, cwd, cost_usd, rate_limits)
+        if result != _HOWMUCHLEFT_NOT_FOUND or not self._cached:
+            self._cached = result
+            self._last_time = now
+        return self._cached or result
 
 
 class Repl:
@@ -190,16 +242,14 @@ class Repl:
         self._startup_printed = False
         self._exit = False
 
-        self._status: dict = {
-            "model": model,
-            "mode": permission_mode,
-            "ctx_pct": None,
-            "cost": None,
-            "working": None,
-            "queued": 0,
-        }
-        self._spinner_idx = 0
-        self._turn_start: float = 0.0
+        # State tracked for howmuchleft
+        self._model: str = model
+        self._mode: str = permission_mode
+        self._ctx_pct: float | None = None
+        self._cost_usd: float = 0.0
+        self._cwd: str = ""
+        self._rate_limits: dict | None = None
+        self._hml_cache = _HowMuchLeftCache()
 
     # --- Public state used by the input controller ---
 
@@ -211,7 +261,6 @@ class Repl:
         """Print the dim ``queued: ...`` notice when a line is typed mid-turn."""
         snippet = " ".join(text.strip().split())[:40]
         self._printer(_dim(f"queued: {snippet}") + "\n")
-        self._status["queued"] = self._queue.qsize() + 1
         self._invalidate()
 
     def request_exit(self) -> None:
@@ -243,30 +292,28 @@ class Repl:
             self._input._session.app.invalidate()
 
     def _get_toolbar(self) -> str:
-        return build_status_line(self._status, self._width)
+        """Return howmuchleft output for the bottom toolbar (ANSI pass-through)."""
+        ttl = 0.25 if self._turn_active else 1.0
+        return self._hml_cache.get(
+            self._model,
+            self._ctx_pct,
+            self._cwd or os.getcwd(),
+            self._cost_usd,
+            self._rate_limits,
+            ttl=ttl,
+        )
 
-    async def _spinner_loop(self) -> None:
-        """Update the spinner ~4x/s while a turn is active."""
-        import time
-
+    async def _refresh_loop(self) -> None:
+        """Invalidate the prompt ~4x/s while a turn is active to refresh howmuchleft."""
         while self._turn_active:
-            elapsed = time.monotonic() - self._turn_start
-            self._spinner_idx = (self._spinner_idx + 1) % len(_SPINNER)
-            self._status["working"] = f"{_SPINNER[self._spinner_idx]} {elapsed:.0f}s"
             self._invalidate()
             await asyncio.sleep(0.25)
-        self._status["working"] = None
-        self._invalidate()
 
     async def run(self) -> None:
         """Production run: real session, patch_stdout, concurrent prompt task."""
         from prompt_toolkit.patch_stdout import patch_stdout
 
-        banner = _dim(
-            f"miniclaude {self._version}"
-            + (f" · {self._status['model']}" if self._status["model"] else "")
-            + (f" · {self._status['mode']}" if self._status["mode"] else "")
-        )
+        banner = _dim(f"miniclaude {self._version}")
         self._printer(banner + RESET + "\n")
 
         async with self._session_factory() as session:
@@ -297,16 +344,12 @@ class Repl:
             await self._run_turn(session, line)
 
     async def _run_turn(self, session: Any, prompt: str) -> None:
-        import time
-
         self._renderer = StreamRenderer(self._width)
         self._turn_active = True
         self._interrupt_pending = False
-        self._turn_start = time.monotonic()
-        self._status["queued"] = self._queue.qsize()
-        spinner_task: asyncio.Task | None = None
+        refresh_task: asyncio.Task | None = None
         if self._input:
-            spinner_task = asyncio.ensure_future(self._spinner_loop())
+            refresh_task = asyncio.ensure_future(self._refresh_loop())
         # Echo the user's input into scrollback
         lines = prompt.strip().splitlines()
         echo = lines[0][:100] + ("…" if len(lines) > 1 or len(lines[0]) > 100 else "")
@@ -322,12 +365,10 @@ class Repl:
             self._printer(self._renderer.finish())
             self._turn_active = False
             self._interrupt_pending = False
-            self._status["working"] = None
-            self._status["queued"] = 0
-            if spinner_task:
-                spinner_task.cancel()
+            if refresh_task:
+                refresh_task.cancel()
                 try:
-                    await spinner_task
+                    await refresh_task
                 except BaseException:
                     pass
             self._invalidate()
@@ -393,10 +434,10 @@ class Repl:
             p(r.finish())
             self._interrupt_pending = False
             p(self._format_result_line(session, event))
-            self._status["cost"] = session.total_cost_usd
+            self._cost_usd = session.total_cost_usd
             pct = _ctx_pct(event.model_usage, getattr(session, "model_name", None))
             if pct is not None:
-                self._status["ctx_pct"] = pct
+                self._ctx_pct = pct
             self._invalidate()
             return
 
@@ -430,8 +471,10 @@ class Repl:
             return
 
         if isinstance(event, SystemInit):
-            self._status["model"] = event.model or self._status["model"]
-            self._status["mode"] = event.permission_mode or self._status["mode"]
+            self._model = event.model or self._model
+            self._mode = event.permission_mode or self._mode
+            if event.cwd:
+                self._cwd = event.cwd
             if not self._startup_printed:
                 self._startup_printed = True
                 p(
@@ -559,6 +602,7 @@ class _PromptController:
 
         from prompt_toolkit import PromptSession
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+        from prompt_toolkit.formatted_text import ANSI
         from prompt_toolkit.history import FileHistory, ThreadedHistory
         from prompt_toolkit.key_binding import KeyBindings
 
@@ -593,12 +637,16 @@ class _PromptController:
             if not event.current_buffer.text:
                 event.app.exit(exception=EOFError())
 
+        def _toolbar():
+            return ANSI(self._repl._get_toolbar())
+
         session = PromptSession(
             multiline=True,
             history=history,
             auto_suggest=AutoSuggestFromHistory(),
             key_bindings=kb,
-            bottom_toolbar=lambda: self._repl._get_toolbar(),
+            show_frame=True,
+            bottom_toolbar=_toolbar,
         )
         # Snappy lone-Esc resolution (default is 0.5s).
         session.app.ttimeoutlen = 0.05
