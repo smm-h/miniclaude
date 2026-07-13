@@ -267,7 +267,10 @@ class Repl:
         if isinstance(event, ToolResult):
             p(
                 format_tool_result(
-                    event.tool_name, event.content, False, event.parent_tool_use_id
+                    event.tool_name,
+                    event.content,
+                    getattr(event, "is_error", False),
+                    event.parent_tool_use_id,
                 )
                 + "\n"
             )

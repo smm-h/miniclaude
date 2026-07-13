@@ -251,6 +251,23 @@ async def test_tool_use_and_result_lines():
     assert "/a/b.py" in plain
 
 
+@sync
+async def test_tool_error_result_renders_red_cross():
+    fake = FakeSession(
+        scripts=[[
+            ToolUse(type="assistant", tool_use_id="t1", name="Bash",
+                    input={"command": "false"}),
+            ToolResult(type="user", tool_use_id="t1", content="command failed",
+                       tool_name="Bash", is_error=True),
+            _result(),
+        ]]
+    )
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    assert "✗ command failed" in _plain(printer.text)
+    assert "\033[31m" in printer.text  # red is wired through from is_error
+
+
 # --- Result / status line ----------------------------------------------------
 
 
