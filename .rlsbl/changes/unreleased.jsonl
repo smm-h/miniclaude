@@ -7,3 +7,4 @@
 {"id":"18c1f9c166ac68e58373ca74a47d4a719bb2fff87b8cc81c","commits":["c4ef8fba61ebd8be12fa51cf03c15f3743a2ae90"],"user_facing":true,"description":"**Fix.** Table column alignment now accounts for emoji and wide character display width.","type":"fix"}
 {"id":"18c1f9c4b4b458d7fd47b3ad79bc4b5683ffbbb563eb2784","commits":["6673d7965f29d4d648a046a751287adda50e1503"],"user_facing":true,"description":"Input box now sizes to content instead of wasting 5 fixed lines","type":"fix"}
 {"id":"18c1f9f850a773ca07666e3f5ad542b3b171172b992767da","commits":["d4e632e99a23e9965f2987c2669b38892bf3d019"],"user_facing":true,"description":"**Output scrollability.** The output window now auto-scrolls to show new content. Mouse scroll-up pauses auto-follow (scroll-lock); submitting input resumes it.","type":"fix"}
+{"id":"18c1fa0b7205664c8b2682fbf9f540d3929be8697f10b6f6","commits":["61fbe8bc078a15c2903d5975ef5d347503a56a53"],"user_facing":false}
