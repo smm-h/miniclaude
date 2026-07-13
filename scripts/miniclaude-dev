@@ -1,0 +1,13 @@
+#!/bin/sh
+# Dev wrapper: exec the miniclaude REPL through the project's dev-synced venv,
+# regardless of the caller's cwd. Until the engine dependency is released,
+# running the client requires UV_NO_SYNC=1 through the project venv; this
+# wrapper is the stable path external launchers can exec.
+set -eu
+
+# Resolve the directory this script lives in (POSIX-compatible).
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+# Repo root is the parent of the script's dir (scripts/ -> repo root).
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
+
+exec env UV_NO_SYNC=1 uv run --project "$repo_root" miniclaude "$@"
