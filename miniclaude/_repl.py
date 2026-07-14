@@ -7,23 +7,23 @@ The design splits cleanly into pure orchestration (unit-testable with a
   ``(session_factory, interaction, printer)`` so tests inject fakes. Event
   dispatch, slash-command parsing, the interrupt guard, and the result/status
   lines are all driven through those injected surfaces -- no terminal required.
-- :class:`_PromptController` is the production input surface: a fullscreen
-  prompt_toolkit ``Application`` with a three-region layout (scrollable output,
-  boxed input, howmuchleft status bar). It runs continuously; user input arrives
+- :class:`_PromptController` is the production input surface: an inline
+  prompt_toolkit ``Application`` with a two-region layout (boxed input,
+  howmuchleft status bar). Output flows through ``patch_stdout(raw=True)``
+  into native terminal scrollback above the managed area. User input arrives
   via the ``Buffer``'s ``accept_handler``. Modals (permission prompts,
-  AskUserQuestion) use ``in_terminal`` to briefly exit fullscreen, run the
+  AskUserQuestion) use ``in_terminal`` to suspend the inline app, run the
   existing _dialogs.py code unchanged, and return.
 
 Layout:
   HSplit [
-    Window(FormattedTextControl)   # scrollable output (weight=1)
     Frame(Window(BufferControl))   # boxed input (dynamic, 1..10 lines)
     Window(FormattedTextControl)   # howmuchleft (height=3)
   ]
 
-The Application uses ``full_screen=True`` (alternate screen -- preserves
-scrollback on exit) and ``color_depth=DEPTH_24_BIT`` (truecolor lossless --
-no quantization of howmuchleft's RGB escapes).
+The Application uses ``full_screen=False`` (inline mode -- output goes to
+native terminal scrollback) and ``color_depth=DEPTH_24_BIT`` (truecolor
+lossless -- no quantization of howmuchleft's RGB escapes).
 """
 
 from __future__ import annotations
@@ -320,7 +320,7 @@ class Repl:
             self._queue.put_nowait(None)
         except Exception:
             pass
-        # In production, also exit the fullscreen Application.
+        # In production, also exit the inline Application.
         if self._input and self._input._app and self._input._app.is_running:
             self._input._app.exit()
 
@@ -364,13 +364,18 @@ class Repl:
             await asyncio.sleep(0.25)
 
     async def run(self) -> None:
-        """Production run: fullscreen Application with output/input/status regions."""
+        """Production run: inline Application with input/status regions."""
+        # Clear the visible screen and home the cursor. Prior terminal
+        # content (shell prompts, launcher output) scrolls into scrollback
+        # history and is no longer visible.
+        sys.stdout.write("\x1b[2J\x1b[H")
+        sys.stdout.flush()
         async with self._session_factory() as session:
             self._session = session
             self._input = _PromptController(self)
-            # Redirect the printer to the output region for the duration of
-            # the fullscreen app. The original printer is restored afterward
-            # so the cost summary prints to the real terminal.
+            # Redirect the printer to the patch_stdout pathway for the
+            # duration of the inline app. The original printer is restored
+            # afterward so the cost summary prints without ProseBlock tracking.
             orig_printer = self._printer
             self._printer = self._input.printer
             try:
@@ -378,7 +383,7 @@ class Repl:
             finally:
                 self._exit = True
                 self._printer = orig_printer
-            # Print cost summary after exiting fullscreen (back to normal terminal).
+            # Print cost summary after the inline app exits.
             sys.stdout.write(self._format_cost(session))
 
     # --- Core loop ---
@@ -534,11 +539,11 @@ class Repl:
         # UnknownEvent / ControlResponse / anything else -> ignored.
 
     async def _with_prompt_suspended(self, coro: Awaitable[Any]) -> Any:
-        """Run a modal coroutine with the fullscreen app temporarily suspended.
+        """Run a modal coroutine with the inline app temporarily suspended.
 
         In tests (no input controller) the coroutine simply runs. In production
-        ``in_terminal`` briefly exits fullscreen so the modal's own inline
-        Application (ChoiceInput / PromptSession) can run without conflict.
+        ``in_terminal`` suspends the inline Application so the modal's own
+        widgets (ChoiceInput / PromptSession) can run without conflict.
         """
         if self._input is None:
             return await coro
@@ -621,32 +626,28 @@ class Repl:
         )
 
 
-# --- Production input controller (fullscreen prompt_toolkit Application) ------
+# --- Production input controller (inline prompt_toolkit Application) ----------
 
 
 class _PromptController:
-    """Fullscreen Application with output/input/status regions.
+    """Inline Application with input/status regions.
 
-    The layout is an HSplit of three regions: a scrollable output window (top,
-    weight=1), a boxed input area (Frame around BufferControl, fixed height),
-    and a howmuchleft status bar (fixed height=3).
+    The layout is an HSplit of two regions: a boxed input area (Frame around
+    BufferControl, bounded height) and a howmuchleft status bar (fixed
+    height=3). Output flows through ``patch_stdout(raw=True)`` into native
+    terminal scrollback above the managed area.
 
-    The Application runs continuously with ``full_screen=True`` (alternate
-    screen) and ``color_depth=DEPTH_24_BIT`` (truecolor, no quantization).
+    The Application runs with ``full_screen=False`` (inline mode) and
+    ``color_depth=DEPTH_24_BIT`` (truecolor, no quantization).
 
     Submitted lines flow into ``repl._queue``. Modals use ``in_terminal``
-    to briefly exit fullscreen and run the existing _dialogs.py inline widgets.
+    to suspend the inline app and run the existing _dialogs.py widgets.
     """
 
     def __init__(self, repl: Repl) -> None:
         self._repl = repl
-        # Accumulated output text (raw ANSI). Appended by the printer.
-        self._output_lines: list[str] = []
         self._app: Any | None = None
-        # Scroll-lock: track output size and user scroll state.
-        self._output_newline_count: int = 0
-        self._user_scrolled: bool = False
-        # Structured output block list for resize-aware reprinting.
+        # Structured output block list for resize-aware reprinting (Phase 3).
         self._output_blocks: list[OutputBlock] = []
 
     def _build_app(self):
@@ -655,7 +656,6 @@ class _PromptController:
         from prompt_toolkit.application import Application
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
         from prompt_toolkit.buffer import Buffer
-        from prompt_toolkit.data_structures import Point
         from prompt_toolkit.formatted_text import ANSI
         from prompt_toolkit.history import FileHistory, ThreadedHistory
         from prompt_toolkit.key_binding import KeyBindings
@@ -665,7 +665,6 @@ class _PromptController:
             FormattedTextControl,
             HSplit,
             Layout,
-            ScrollOffsets,
             Window,
         )
         from prompt_toolkit.output.color_depth import ColorDepth
@@ -675,59 +674,11 @@ class _PromptController:
         history_dir.mkdir(parents=True, exist_ok=True)
         history = ThreadedHistory(FileHistory(str(history_dir / "history")))
 
-        # --- Output region (scrollable, top) ---
-        def _get_output_text():
-            return ANSI("".join(self._output_lines))
-
-        def _get_cursor_position() -> Point:
-            if self._user_scrolled:
-                # Pin the view where the user scrolled to.
-                return Point(x=0, y=output_window.vertical_scroll)
-            # Auto-follow: cursor at the last line so scroll keeps up.
-            return Point(x=0, y=self._output_newline_count)
-
-        output_control = FormattedTextControl(
-            text=_get_output_text,
-            show_cursor=False,
-            get_cursor_position=_get_cursor_position,
-        )
-        output_window = Window(
-            content=output_control,
-            wrap_lines=True,
-            scroll_offsets=ScrollOffsets(bottom=0),
-            allow_scroll_beyond_bottom=True,
-        )
-
-        # Intercept scroll-up to engage scroll-lock (auto-follow pauses
-        # until the user submits input).
-        _original_scroll_up = output_window._scroll_up
-
-        def _patched_scroll_up() -> None:
-            self._user_scrolled = True
-            _original_scroll_up()
-
-        output_window._scroll_up = _patched_scroll_up
-
-        # Intercept scroll-down to disengage scroll-lock when the user
-        # scrolls back to the bottom (auto-follow resumes).
-        _original_scroll_down = output_window._scroll_down
-
-        def _patched_scroll_down() -> None:
-            _original_scroll_down()
-            # After scrolling down, check if we've reached the bottom.
-            # vertical_scroll >= total lines means we're at the tail.
-            if output_window.vertical_scroll >= self._output_newline_count:
-                self._user_scrolled = False
-
-        output_window._scroll_down = _patched_scroll_down
-
-        # --- Input region (boxed, bottom) ---
+        # --- Input region (boxed) ---
         def _accept(buf: Buffer) -> bool:
             text = buf.text
             if not text.strip():
                 return False
-            # Resume auto-follow on input submission.
-            self._user_scrolled = False
             if self._repl.turn_active:
                 self._repl.notice_queued(text)
             self._repl._queue.put_nowait(text)
@@ -755,7 +706,11 @@ class _PromptController:
             return ANSI(self._repl._get_toolbar())
 
         hml_control = FormattedTextControl(text=_get_hml_text)
-        hml_window = Window(content=hml_control, height=3)
+        hml_window = Window(
+            content=hml_control,
+            height=3,
+            dont_extend_height=True,
+        )
 
         # --- Key bindings ---
         kb = KeyBindings()
@@ -787,18 +742,20 @@ class _PromptController:
                 event.app.exit()
 
         # --- Layout ---
-        root = HSplit([output_window, framed_input, hml_window])
+        # Bounded height prevents _min_available_height from inflating the
+        # layout and creating dead space below the managed area.
+        root = HSplit(
+            [framed_input, hml_window],
+            height=Dimension(max=16),
+        )
         layout = Layout(root, focused_element=input_buffer)
 
         app: Application = Application(
             layout=layout,
             key_bindings=kb,
-            full_screen=True,
-            mouse_support=True,
+            full_screen=False,
             color_depth=ColorDepth.DEPTH_24_BIT,
-            # Refresh at ~4Hz so howmuchleft updates during turns and the
-            # output window picks up new printer() content without explicit
-            # invalidate() calls.
+            # Refresh at ~4Hz so howmuchleft updates during turns.
             refresh_interval=0.25,
         )
         # Snappy lone-Esc resolution (default is 0.5s).
@@ -806,22 +763,33 @@ class _PromptController:
         return app
 
     def printer(self, text: str) -> None:
-        """Append prose text to the output region and record a ProseBlock."""
+        """Write prose text to scrollback via patch_stdout and record a ProseBlock."""
         if text:
-            self._output_lines.append(text)
-            self._output_newline_count += text.count("\n")
+            self._raw_write(text)
             self._output_blocks.append(ProseBlock(text))
 
     def _raw_write(self, text: str) -> None:
-        """Write rendered text to the display without creating a ProseBlock.
+        """Write text to the display via sys.stdout (routed through patch_stdout).
 
-        Used by the on_table callback (Phase 0b) to write rendered table text.
-        The caller is responsible for appending the appropriate TableBlock to
+        Used directly by the on_table callback to write rendered table text.
+        The caller is responsible for appending the appropriate block to
         _output_blocks separately.
         """
         if text:
-            self._output_lines.append(text)
-            self._output_newline_count += text.count("\n")
+            sys.stdout.write(text)
+
+    def _terminal_write(self, text: str) -> None:
+        """Direct terminal write bypassing patch_stdout's StdoutProxy.
+
+        Uses app.output.write_raw() + output.flush(). Used ONLY inside
+        in_terminal blocks (Phase 3 SIGWINCH reprint). patch_stdout's
+        StdoutProxy defers sys.stdout.write calls during in_terminal -- the
+        deferred writes execute only after in_terminal exits. This method
+        bypasses that deferral entirely.
+        """
+        if self._app and text:
+            self._app.output.write_raw(text)
+            self._app.output.flush()
 
     async def run(
         self,
@@ -829,7 +797,10 @@ class _PromptController:
         session: Any,
     ) -> None:
         """Build the Application, run the main loop as a background task, and
-        run the app. When either finishes (exit or EOFError), clean up."""
+        run the app under patch_stdout. When either finishes (exit or
+        EOFError), clean up."""
+        from prompt_toolkit.patch_stdout import patch_stdout
+
         self._app = self._build_app()
 
         async def _loop_wrapper() -> None:
@@ -843,7 +814,8 @@ class _PromptController:
         loop_task = asyncio.ensure_future(_loop_wrapper())
 
         try:
-            await self._app.run_async()
+            with patch_stdout(raw=True):
+                await self._app.run_async()
         except EOFError:
             self._repl.request_exit()
         finally:
@@ -855,7 +827,7 @@ class _PromptController:
                 pass
 
     async def run_modal(self, coro: Awaitable[Any]) -> Any:
-        """Briefly exit fullscreen, run the modal coroutine, return to fullscreen.
+        """Suspend the inline app, run the modal coroutine, then resume.
 
         Uses ``in_terminal`` which suspends the Application's rendering,
         restores the normal terminal, runs the modal (which may create its own
