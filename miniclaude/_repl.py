@@ -89,6 +89,22 @@ class TableBlock:
 OutputBlock = Union[ProseBlock, TableBlock]
 
 
+def materialize_blocks(blocks: list[OutputBlock], width: int) -> str:
+    """Render a list of output blocks into a single ANSI string.
+
+    ProseBlocks contribute their pre-rendered ansi_text as-is. TableBlocks are
+    rendered at the given width via render_table. Used by the SIGWINCH repaint
+    (Phase 3) to reprint the visible area at the new terminal width.
+    """
+    parts: list[str] = []
+    for block in blocks:
+        if isinstance(block, ProseBlock):
+            parts.append(block.ansi_text)
+        elif isinstance(block, TableBlock):
+            parts.append(render_table(block.data, width))
+    return "".join(parts)
+
+
 # --- ANSI helpers (raw SGR) ---------------------------------------------------
 
 RESET = "\x1b[0m"
