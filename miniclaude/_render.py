@@ -378,7 +378,10 @@ class StreamRenderer:
     def _pad(self, styled: str, w: int, target: int, align: str) -> str:
         if w > target:
             styled = _truncate_visible(styled, target)
-            w = target
+            # Measure actual visible width after truncation; wide chars may
+            # create a gap (e.g. a 2-col emoji that doesn't fit before the
+            # ellipsis leaves the result shorter than target).
+            w = _visible_len(styled)
         pad = target - w
         if align == "right":
             return " " * pad + styled

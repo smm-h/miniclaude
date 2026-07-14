@@ -95,6 +95,16 @@ FIXTURES: dict[str, list[Segment]] = {
         ("thinking", "hidden reasoning\nstep two\n"),
         ("text", "## Results\n\n```sh\necho **x**\n```\n\n| K | V |\n| --- | --- |\n| 1 | 2 |\ntail\n"),
     ],
+    "table_emoji": [
+        ("text", "| \U0001f3b8 | hello | \U0001f98b\U0001f33b |\n"
+                 "| --- | --- | --- |\n"
+                 "| a | world | x |\n"),
+    ],
+    "table_mixed_content": [
+        ("text", "| **bold** | \U0001f3b8music |\n"
+                 "| --- | --- |\n"
+                 "| normal | data |\n"),
+    ],
 }
 
 CHUNK_STRATEGIES: list[list[int]] = [
@@ -375,3 +385,97 @@ def test__truncate_visible_emoji() -> None:
     result2 = _truncate_visible("\U0001f3b8ab", 2)
     plain2 = _strip_ansi(result2)
     assert plain2 == "…"
+
+
+# -- table rendering with emoji / wide chars --------------------------------
+
+
+def test_table_emoji_alignment() -> None:
+    """Emoji cells (width=2) must produce correctly-aligned pipes and padding.
+
+    At width=16, columns shrink to target=2 each.  Truncating the emoji cell
+    "\U0001f98b\U0001f33b" (4 visible cols) to target=2 produces just an ellipsis
+    (1 col, because the 2-col emoji cannot fit in the 1-col budget before the
+    ellipsis).  The renderer must pad the remaining 1 col so pipes stay aligned.
+    """
+    md = (
+        "| \U0001f3b8 | hello | \U0001f98b\U0001f33b |\n"
+        "| --- | --- | --- |\n"
+        "| a | world | x |\n"
+    )
+    out = _single(md, width=16)
+    plain = _strip_ansi(out)
+    # Every row must be exactly 16 visible columns (pipes align).
+    for line in plain.splitlines():
+        assert _visible_len(line) == 16, f"misaligned: {line!r}"
+    # Exact golden plain text.
+    assert plain == (
+        "| \U0001f3b8 | h… | …  |\n"
+        "|────|────|────|\n"
+        "| a  | w… | x  |\n"
+    )
+    # Header cells are bold.
+    assert BOLD in out
+
+
+def test_table_wide_truncation() -> None:
+    """20-column table that exceeds 80 cols: cells truncated, pipes aligned.
+
+    At width=82 the fitting algorithm leaves 19 columns at target=1 and one
+    column at target=2.  The last column holds emoji content ("\U0001f3b8\U0001f3b8",
+    4 visible cols) which, when truncated to target=2, produces a 1-col ellipsis
+    (the 2-col emoji cannot fit in the 1-col budget before the ellipsis).  The
+    renderer must pad the shortfall so all three rows are the same width.
+    """
+    headers = [chr(ord("A") + i) for i in range(20)]
+    body_cells = ["ab"] * 19 + ["\U0001f3b8\U0001f3b8"]
+    md = (
+        "| " + " | ".join(headers) + " |\n"
+        "| " + " | ".join(["-"] * 20) + " |\n"
+        "| " + " | ".join(body_cells) + " |\n"
+    )
+    out = _single(md, width=82)
+    plain = _strip_ansi(out)
+    lines = plain.splitlines()
+    assert len(lines) == 3
+    # All rows must have the same visible width (pipes align).
+    widths = [_visible_len(line) for line in lines]
+    assert widths[0] == widths[1] == widths[2] == 82, f"misaligned: {widths}"
+    # Body cells for columns 0-18 are truncated (just an ellipsis at target=1).
+    # Column 19 body cell is truncated emoji, padded to target=2.
+    expected_header = "| " + " | ".join(list("ABCDEFGHIJKLMNOPQRS") + ["T "]) + " |"
+    expected_sep = "|" + "|".join(["───"] * 19 + ["────"]) + "|"
+    expected_body = "| " + " | ".join(["…"] * 19 + ["… "]) + " |"
+    assert lines[0] == expected_header
+    assert lines[1] == expected_sep
+    assert lines[2] == expected_body
+
+
+def test_table_mixed_content() -> None:
+    """Bold markdown + emoji in cells: alignment accounts for zero-width markers.
+
+    "**bold**" renders as styled "bold" (4 visible cols, not 8 for the raw
+    markdown).  At width=11 both columns shrink to target=2.  The emoji cell
+    "\U0001f3b8music" truncates to a 1-col ellipsis (the 2-col emoji cannot fit
+    in 1 col before the ellipsis), requiring 1 col of padding.
+    """
+    md = (
+        "| **bold** | \U0001f3b8music |\n"
+        "| --- | --- |\n"
+        "| normal | data |\n"
+    )
+    out = _single(md, width=11)
+    plain = _strip_ansi(out)
+    # Every row must be exactly 11 visible columns.
+    for line in plain.splitlines():
+        assert _visible_len(line) == 11, f"misaligned: {line!r}"
+    # Exact golden plain text.
+    assert plain == (
+        "| b… | …  |\n"
+        "|────|────|\n"
+        "| n… | d… |\n"
+    )
+    # Bold markers (**) are consumed, not visible.
+    assert "**" not in plain
+    # Bold styling is applied in the output.
+    assert BOLD in out
