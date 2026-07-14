@@ -171,20 +171,239 @@ def _parse_align(cell: str) -> str:
     return "left"
 
 
-def _fit_widths(col_w: list[int], width: int) -> list[int]:
-    """Shrink column widths so the table fits within ``width`` columns."""
-    num_cols = len(col_w)
+def _longest_word_width(styled: str) -> int:
+    """Visible width of the longest unbreakable word/segment in styled text.
 
-    def total(cw: list[int]) -> int:
-        return sum(cw) + 3 * num_cols + 1
+    Splits at spaces and hyphens (break-after: hyphen stays in the first segment).
+    """
+    plain = _strip_ansi(styled)
+    if not plain:
+        return 0
+    max_w = 0
+    cur_w = 0
+    for c in plain:
+        if c == " ":
+            max_w = max(max_w, cur_w)
+            cur_w = 0
+        elif c == "-":
+            cur_w += _char_width(c)
+            max_w = max(max_w, cur_w)
+            cur_w = 0
+        else:
+            cur_w += _char_width(c)
+    return max(max_w, cur_w)
 
-    cw = list(col_w)
-    while total(cw) > width:
-        j = max(range(num_cols), key=lambda k: cw[k])
-        if cw[j] <= 1:
-            break
-        cw[j] -= 1
-    return cw
+
+def _parse_sgr_params(escape: str) -> list[int]:
+    """Parse parameter codes from an SGR escape sequence.
+
+    ``\\x1b[2;90m`` -> ``[2, 90]``.  ``\\x1b[m`` -> ``[0]``.
+    """
+    inner = escape[2:-1]  # strip \\x1b[ and m
+    if not inner:
+        return [0]
+    parts: list[int] = []
+    for p in inner.split(";"):
+        if p.isdigit():
+            parts.append(int(p))
+    return parts or [0]
+
+
+def _update_sgr(state: set[int], escape: str) -> None:
+    """Update active SGR state with a new escape sequence."""
+    for p in _parse_sgr_params(escape):
+        if p == 0:
+            state.clear()
+        elif p in (1, 2, 3, 4):
+            state.add(p)
+        elif p == 22:
+            state.discard(1)
+            state.discard(2)
+        elif p == 23:
+            state.discard(3)
+        elif p == 24:
+            state.discard(4)
+        elif 30 <= p <= 37 or 90 <= p <= 97:
+            state -= {c for c in state if 30 <= c <= 37 or 90 <= c <= 97}
+            state.add(p)
+        elif p == 39:
+            state -= {c for c in state if 30 <= c <= 37 or 90 <= c <= 97}
+        elif 40 <= p <= 47 or 100 <= p <= 107:
+            state -= {c for c in state if 40 <= c <= 47 or 100 <= c <= 107}
+            state.add(p)
+        elif p == 49:
+            state -= {c for c in state if 40 <= c <= 47 or 100 <= c <= 107}
+
+
+def _reconstruct_sgr(state: set[int]) -> str:
+    """Reconstruct a single SGR escape from the active state set."""
+    if not state:
+        return ""
+    return "\x1b[" + ";".join(str(c) for c in sorted(state)) + "m"
+
+
+def _wrap_cell(text: str, width: int) -> list[str]:
+    """Wrap styled text into sub-lines of at most ``width`` visible columns.
+
+    Breaks at word boundaries (spaces, hyphens) when possible; hard-breaks
+    mid-word only when a single word exceeds the column width.  Tracks ANSI
+    SGR state across breaks: each sub-line ends with a reset and the next
+    starts with the re-emitted active SGR.
+    """
+    if width <= 0:
+        return [""]
+    if not text:
+        return [""]
+
+    # Tokenize: ANSI escapes and individual characters.
+    Token = tuple  # ('ansi', str) | ('char', str, int)
+    tokens: list[Token] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        m = _ANSI_RE.match(text, i)
+        if m:
+            tokens.append(("ansi", m.group(0)))
+            i = m.end()
+        else:
+            tokens.append(("char", text[i], _char_width(text[i])))
+            i += 1
+
+    lines: list[str] = []
+    cur: list[Token] = []
+    cur_w = 0
+    brk = -1        # index in cur AFTER last break-point char
+    brk_sgr: set[int] = set()
+    sgr: set[int] = set()
+
+    def _emit(parts: list[Token], state: set[int]) -> str:
+        s = "".join(p[1] for p in parts)
+        if state:
+            s += RESET
+        return s
+
+    def _sgr_prefix(state: set[int]) -> list[Token]:
+        seq = _reconstruct_sgr(state)
+        return [("ansi", seq)] if seq else []
+
+    for tok in tokens:
+        if tok[0] == "ansi":
+            _update_sgr(sgr, tok[1])
+            cur.append(tok)
+            continue
+
+        ch: str = tok[1]
+        cw: int = tok[2]
+
+        # If char overflows, break the line first.
+        if cur_w + cw > width:
+            if ch == " ":
+                # Space at overflow point: emit current line, consume space.
+                lines.append(_emit(cur, sgr))
+                cur = _sgr_prefix(sgr)
+                cur_w = 0
+                brk = -1
+                continue
+            if brk >= 0:
+                # Word-boundary break.
+                before = cur[:brk]
+                after = cur[brk:]
+                lines.append(_emit(before, brk_sgr))
+                after_w = sum(t[2] for t in after if t[0] == "char")
+                cur = _sgr_prefix(brk_sgr) + after
+                cur_w = after_w
+                brk = -1
+            elif cur_w > 0:
+                # Hard break (only when cur has visible chars; ANSI-only
+                # content has cur_w == 0 and must not be emitted as a line).
+                lines.append(_emit(cur, sgr))
+                cur = _sgr_prefix(sgr)
+                cur_w = 0
+                brk = -1
+
+        # After the break, if still overflows (long leftover + current char),
+        # hard-break again.
+        if cur_w + cw > width and cur_w > 0:
+            lines.append(_emit(cur, sgr))
+            cur = _sgr_prefix(sgr)
+            cur_w = 0
+            brk = -1
+
+        # If char doesn't fit on an empty line, add it anyway to avoid infinite loop
+        # (happens when cw > width, e.g. wide char on a 1-col column).
+
+        cur.append(tok)
+        cur_w += cw
+
+        if ch == " " or ch == "-":
+            brk = len(cur)  # break AFTER this char
+            brk_sgr = set(sgr)
+
+    # Emit remaining.
+    if cur or not lines:
+        s = "".join(p[1] for p in cur)
+        if sgr:
+            s += RESET
+        lines.append(s)
+
+    return lines
+
+
+def _fit_widths(
+    natural_w: list[int], width: int, floors: list[int] | None = None
+) -> list[int]:
+    """Constraint-based column width allocation.
+
+    Three tiers:
+    1. Natural widths fit -- use them.
+    2. Floors fit -- give each its floor, distribute remaining proportionally.
+    3. Extreme -- proportional to floor.
+    """
+    num_cols = len(natural_w)
+    overhead = 3 * num_cols + 1
+    available = width - overhead
+
+    if floors is None:
+        floors = [1] * num_cols
+
+    if available <= 0:
+        return [max(f, 1) for f in floors]
+
+    natural_total = sum(natural_w)
+
+    # Tier 1: everything fits at natural width.
+    if natural_total <= available:
+        return list(natural_w)
+
+    floor_total = sum(floors)
+
+    # Tier 2: floors fit, distribute remaining proportionally to excess.
+    if floor_total <= available:
+        remaining = available - floor_total
+        excess = [max(0, natural_w[j] - floors[j]) for j in range(num_cols)]
+        total_excess = sum(excess)
+        result = list(floors)
+        if total_excess > 0:
+            for j in range(num_cols):
+                result[j] += remaining * excess[j] // total_excess
+            allocated = sum(result) - floor_total
+            leftover = remaining - allocated
+            indices = sorted(range(num_cols), key=lambda j: excess[j], reverse=True)
+            for k in range(min(leftover, len(indices))):
+                result[indices[k]] += 1
+        return result
+
+    # Tier 3: extreme narrowing -- proportional to floor.
+    if floor_total > 0:
+        result = [max(1, available * floors[j] // floor_total) for j in range(num_cols)]
+        allocated = sum(result)
+        leftover = available - allocated
+        indices = sorted(range(num_cols), key=lambda j: floors[j], reverse=True)
+        for k in range(max(0, min(leftover, len(indices)))):
+            result[indices[k]] += 1
+        return result
+
+    return [1] * num_cols
 
 
 def _pad(styled: str, visible_width: int, target_width: int, align: str) -> str:
@@ -204,26 +423,65 @@ def _pad(styled: str, visible_width: int, target_width: int, align: str) -> str:
     return styled + " " * pad
 
 
-def _render_table_row(
+def _render_top_border(col_w: list[int]) -> str:
+    """Render top border: ``┌───┬───┐``."""
+    return "┌" + "┬".join("─" * (w + 2) for w in col_w) + "┐\n"
+
+
+def _render_bottom_border(col_w: list[int]) -> str:
+    """Render bottom border: ``└───┴───┘``."""
+    return "└" + "┴".join("─" * (w + 2) for w in col_w) + "┘\n"
+
+
+def _render_separator(col_w: list[int]) -> str:
+    """Render header-body separator: ``├───┼───┤``."""
+    return "├" + "┼".join("─" * (w + 2) for w in col_w) + "┤\n"
+
+
+def _render_wrapped_row(
     cells: list[tuple[str, int]],
     col_w: list[int],
     aligns: list[str],
 ) -> str:
-    """Render one table row as ``| cell | cell | ... |\\n``."""
-    parts = [_pad(styled, w, col_w[j], aligns[j]) for j, (styled, w) in enumerate(cells)]
-    return "| " + " | ".join(parts) + " |\n"
+    """Render one table row with cell wrapping, using box-drawing ``│`` separators.
 
+    Each cell is wrapped into sub-lines.  All sub-lines for the row are emitted
+    with ``│`` column separators aligned.  Shorter cells are padded with spaces.
+    """
+    num_cols = len(col_w)
 
-def _render_separator(col_w: list[int]) -> str:
-    """Render a horizontal separator row with box-drawing dashes."""
-    return "|" + "|".join("─" * (w + 2) for w in col_w) + "|\n"
+    # Wrap each cell into sub-lines.
+    wrapped: list[list[str]] = []
+    for j, (styled, _) in enumerate(cells):
+        wrapped.append(_wrap_cell(styled, col_w[j]))
+
+    # Pad to num_cols if fewer cells than columns.
+    while len(wrapped) < num_cols:
+        wrapped.append([""])
+
+    row_height = max(len(w) for w in wrapped) if wrapped else 1
+
+    out: list[str] = []
+    for i in range(row_height):
+        parts: list[str] = []
+        for j in range(num_cols):
+            if i < len(wrapped[j]):
+                subline = wrapped[j][i]
+                vis_w = _visible_len(subline)
+            else:
+                subline = ""
+                vis_w = 0
+            parts.append(_pad(subline, vis_w, col_w[j], aligns[j]))
+        out.append("│ " + " │ ".join(parts) + " │\n")
+
+    return "".join(out)
 
 
 # -- render_table: single rendering codepath for tables ----------------------
 
 
 def render_table(data: TableData, width: int) -> str:
-    """Render a TableData into an ANSI-styled string at the given terminal width.
+    """Render a TableData into an ANSI-styled box-drawing table at the given width.
 
     This is the SINGLE rendering codepath for tables, used by:
     - _flush_table (streaming path, when no callback)
@@ -236,7 +494,6 @@ def render_table(data: TableData, width: int) -> str:
         1,
     )
     aligns = list(data.aligns) if data.aligns else ["left"] * num_cols
-    # Pad aligns to num_cols if short.
     while len(aligns) < num_cols:
         aligns.append("left")
 
@@ -257,20 +514,35 @@ def render_table(data: TableData, width: int) -> str:
     header_grid = build(data.header_rows, True)
     body_grid = build(data.body_rows, False)
 
-    col_w = [0] * num_cols
-    for grid in (header_grid, body_grid):
-        for cells in grid:
-            for j, (_s, w) in enumerate(cells):
-                col_w[j] = max(col_w[j], w)
-    col_w = _fit_widths(col_w, width)
+    # Column width solver: compute natural widths, header widths, word widths.
+    natural_w = [0] * num_cols
+    header_w = [0] * num_cols
+    word_w = [0] * num_cols
 
-    lines: list[str] = []
     for cells in header_grid:
-        lines.append(_render_table_row(cells, col_w, aligns))
+        for j, (styled, vis_w) in enumerate(cells):
+            natural_w[j] = max(natural_w[j], vis_w)
+            header_w[j] = max(header_w[j], vis_w)
+            word_w[j] = max(word_w[j], _longest_word_width(styled))
+
+    for cells in body_grid:
+        for j, (styled, vis_w) in enumerate(cells):
+            natural_w[j] = max(natural_w[j], vis_w)
+            word_w[j] = max(word_w[j], _longest_word_width(styled))
+
+    floors = [max(header_w[j], word_w[j], 1) for j in range(num_cols)]
+    col_w = _fit_widths(natural_w, width, floors)
+
+    # Render with box-drawing borders and cell wrapping.
+    lines: list[str] = []
+    lines.append(_render_top_border(col_w))
+    for cells in header_grid:
+        lines.append(_render_wrapped_row(cells, col_w, aligns))
     if header_grid:
         lines.append(_render_separator(col_w))
     for cells in body_grid:
-        lines.append(_render_table_row(cells, col_w, aligns))
+        lines.append(_render_wrapped_row(cells, col_w, aligns))
+    lines.append(_render_bottom_border(col_w))
     return "".join(lines)
 
 
