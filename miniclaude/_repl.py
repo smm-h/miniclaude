@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -644,11 +645,19 @@ class _PromptController:
     to suspend the inline app and run the existing _dialogs.py widgets.
     """
 
+    # Managed area height: frame borders (2) + max input (10) + howmuchleft (3)
+    # + margin (1) = 16 lines. prompt_toolkit re-renders this below the
+    # reprinted content.
+    _MANAGED_AREA_HEIGHT = 16
+
     def __init__(self, repl: Repl) -> None:
         self._repl = repl
         self._app: Any | None = None
         # Structured output block list for resize-aware reprinting (Phase 3).
         self._output_blocks: list[OutputBlock] = []
+        # SIGWINCH repaint debounce state.
+        self._last_repaint_time: float = 0.0
+        self._pending_repaint: asyncio.TimerHandle | None = None
 
     def _build_app(self):
         from pathlib import Path
@@ -791,6 +800,96 @@ class _PromptController:
             self._app.output.write_raw(text)
             self._app.output.flush()
 
+    # -- SIGWINCH resize handling (Phase 3) ------------------------------------
+
+    def _on_sigwinch(self) -> None:
+        """Called from the event loop when SIGWINCH fires.
+
+        Updates width on the Repl and the active StreamRenderer, then
+        schedules a debounced visible-area repaint.
+        """
+        if not self._app:
+            return
+        new_size = self._app.output.get_size()
+        new_width = new_size.columns
+        if new_width == self._repl._width:
+            return
+        # Propagate width to Repl and the active StreamRenderer.
+        self._repl._width = new_width
+        self._repl._renderer.width = new_width
+        # Debounce: skip if last repaint was < 100ms ago, schedule for later.
+        now = time.monotonic()
+        elapsed = now - self._last_repaint_time
+        if self._pending_repaint is not None:
+            self._pending_repaint.cancel()
+            self._pending_repaint = None
+        if elapsed < 0.1:
+            delay = 0.1 - elapsed
+            loop = asyncio.get_event_loop()
+            self._pending_repaint = loop.call_later(
+                delay, lambda: asyncio.ensure_future(self._do_repaint(new_width))
+            )
+        else:
+            asyncio.ensure_future(self._do_repaint(new_width))
+
+    async def _do_repaint(self, new_width: int) -> None:
+        """Repaint the visible area at the new terminal width.
+
+        Suspends the inline Application via in_terminal, clears the screen,
+        reprints the last screenful of output blocks, then resumes. All writes
+        use _terminal_write to bypass patch_stdout's StdoutProxy deferral.
+        """
+        from prompt_toolkit.application import in_terminal
+
+        if not self._app or not self._app.is_running:
+            return
+        self._last_repaint_time = time.monotonic()
+        self._pending_repaint = None
+        # Get terminal height for the reprint budget.
+        term_height = self._app.output.get_size().rows
+        budget = max(1, term_height - self._MANAGED_AREA_HEIGHT)
+
+        async with in_terminal():
+            # Synchronized output start (batch into single frame).
+            self._terminal_write("\x1b[?2026h")
+            # Clear visible screen and home cursor.
+            self._terminal_write("\x1b[2J\x1b[H")
+            # Walk blocks backwards to find the last screenful.
+            block_indices: list[int] = []
+            lines_used = 0
+            for i in range(len(self._output_blocks) - 1, -1, -1):
+                block = self._output_blocks[i]
+                if isinstance(block, ProseBlock):
+                    # Approximate physical line count at new width.
+                    block_lines = 0
+                    for line in block.ansi_text.split("\n"):
+                        block_lines += max(1, math.ceil(len(line) / new_width)) if line else 1
+                    # The final empty string from trailing \n should not add a line.
+                    if block.ansi_text.endswith("\n"):
+                        block_lines -= 1
+                    block_lines = max(block_lines, 0)
+                elif isinstance(block, TableBlock):
+                    rendered = render_table(block.data, new_width)
+                    block_lines = rendered.count("\n")
+                else:
+                    continue
+                if lines_used + block_lines > budget and block_indices:
+                    break
+                block_indices.append(i)
+                lines_used += block_lines
+                if lines_used >= budget:
+                    break
+            # Reprint in forward order.
+            block_indices.reverse()
+            for i in block_indices:
+                block = self._output_blocks[i]
+                if isinstance(block, ProseBlock):
+                    self._terminal_write(block.ansi_text)
+                elif isinstance(block, TableBlock):
+                    self._terminal_write(render_table(block.data, new_width))
+            # Synchronized output end.
+            self._terminal_write("\x1b[?2026l")
+
     async def run(
         self,
         main_loop: Callable[[Any], Awaitable[None]],
@@ -802,6 +901,18 @@ class _PromptController:
         from prompt_toolkit.patch_stdout import patch_stdout
 
         self._app = self._build_app()
+
+        # Chain our SIGWINCH handler into the Application's _on_resize.
+        # prompt_toolkit registers app._on_resize as the SIGWINCH handler
+        # inside run_async. By replacing it with a wrapper, we get called
+        # on every resize without fighting the signal handler registration.
+        _original_on_resize = self._app._on_resize
+
+        def _chained_on_resize() -> None:
+            _original_on_resize()
+            self._on_sigwinch()
+
+        self._app._on_resize = _chained_on_resize
 
         async def _loop_wrapper() -> None:
             try:
