@@ -63,8 +63,31 @@ from miniclaude._dialogs import (
     run_permission_flow,
     run_question_flow,
 )
-from miniclaude._render import StreamRenderer
+from miniclaude._render import StreamRenderer, TableData
 from miniclaude._toolline import format_tool_result, format_tool_use
+
+# --- Output block types -------------------------------------------------------
+
+from dataclasses import dataclass
+from typing import Union
+
+
+@dataclass(frozen=True)
+class ProseBlock:
+    """Pre-rendered ANSI text block (immutable after creation)."""
+
+    ansi_text: str
+
+
+@dataclass(frozen=True)
+class TableBlock:
+    """Structured table data that can be rendered at any width."""
+
+    data: TableData
+
+
+OutputBlock = Union[ProseBlock, TableBlock]
+
 
 # --- ANSI helpers (raw SGR) ---------------------------------------------------
 
@@ -596,6 +619,8 @@ class _PromptController:
         # Scroll-lock: track output size and user scroll state.
         self._output_newline_count: int = 0
         self._user_scrolled: bool = False
+        # Structured output block list for resize-aware reprinting.
+        self._output_blocks: list[OutputBlock] = []
 
     def _build_app(self):
         from pathlib import Path
@@ -754,7 +779,19 @@ class _PromptController:
         return app
 
     def printer(self, text: str) -> None:
-        """Append text to the output region (called as the Repl's printer)."""
+        """Append prose text to the output region and record a ProseBlock."""
+        if text:
+            self._output_lines.append(text)
+            self._output_newline_count += text.count("\n")
+            self._output_blocks.append(ProseBlock(text))
+
+    def _raw_write(self, text: str) -> None:
+        """Write rendered text to the display without creating a ProseBlock.
+
+        Used by the on_table callback (Phase 0b) to write rendered table text.
+        The caller is responsible for appending the appropriate TableBlock to
+        _output_blocks separately.
+        """
         if text:
             self._output_lines.append(text)
             self._output_newline_count += text.count("\n")

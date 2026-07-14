@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass, field
 
 # SGR codes.
 BOLD = "\033[1m"
@@ -29,6 +30,15 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 _HEADER_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$")
 _BULLET_RE = re.compile(r"^(\s*)[-*][ \t]+(.*)$")
 _SEP_CELL_RE = re.compile(r"^:?-+:?$")
+
+
+@dataclass(frozen=True)
+class TableData:
+    """Raw markdown cell text for a table (not styled). Styling happens at render time."""
+
+    header_rows: list[list[str]]
+    body_rows: list[list[str]]
+    aligns: list[str] = field(default_factory=list)
 
 
 def _strip_ansi(s: str) -> str:
