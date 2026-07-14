@@ -656,6 +656,19 @@ class _PromptController:
 
         output_window._scroll_up = _patched_scroll_up
 
+        # Intercept scroll-down to disengage scroll-lock when the user
+        # scrolls back to the bottom (auto-follow resumes).
+        _original_scroll_down = output_window._scroll_down
+
+        def _patched_scroll_down() -> None:
+            _original_scroll_down()
+            # After scrolling down, check if we've reached the bottom.
+            # vertical_scroll >= total lines means we're at the tail.
+            if output_window.vertical_scroll >= self._output_newline_count:
+                self._user_scrolled = False
+
+        output_window._scroll_down = _patched_scroll_down
+
         # --- Input region (boxed, bottom) ---
         def _accept(buf: Buffer) -> bool:
             text = buf.text
@@ -729,6 +742,7 @@ class _PromptController:
             layout=layout,
             key_bindings=kb,
             full_screen=True,
+            mouse_support=True,
             color_depth=ColorDepth.DEPTH_24_BIT,
             # Refresh at ~4Hz so howmuchleft updates during turns and the
             # output window picks up new printer() content without explicit
