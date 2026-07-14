@@ -106,7 +106,6 @@ def cmd_repl(
         session_factory=lambda: AsyncSession(config),
         interaction=PromptToolkitInteraction(),
         printer=_printer,
-        version=_get_version(),
         width=width,
         model=model,
         permission_mode=permission_mode,

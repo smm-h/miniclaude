@@ -227,7 +227,6 @@ class Repl:
         interaction: Interaction,
         printer: Printer,
         *,
-        version: str = "",
         width: int = 80,
         model: str = "",
         permission_mode: str = "",
@@ -235,7 +234,6 @@ class Repl:
         self._session_factory = session_factory
         self._interaction = interaction
         self._printer = printer
-        self._version = version
         self._width = width
 
         self._queue: asyncio.Queue = asyncio.Queue()
@@ -246,7 +244,6 @@ class Repl:
         self._turn_active = False
         self._interrupt_pending = False
         self._interrupt_task: asyncio.Task | None = None
-        self._startup_printed = False
         self._exit = False
 
         # State tracked for howmuchleft
@@ -255,6 +252,7 @@ class Repl:
         self._ctx_pct: float | None = None
         self._cost_usd: float = 0.0
         self._cwd: str = ""
+        self._session_id: str = ""
         self._rate_limits: dict | None = None
         self._hml_cache = _HowMuchLeftCache()
 
@@ -329,8 +327,6 @@ class Repl:
             # so the cost summary prints to the real terminal.
             orig_printer = self._printer
             self._printer = self._input.printer
-            # Banner goes into the output window.
-            self._printer(_dim(f"miniclaude {self._version}") + RESET + "\n")
             try:
                 await self._input.run(self._main_loop, session)
             finally:
@@ -482,14 +478,7 @@ class Repl:
             self._mode = event.permission_mode or self._mode
             if event.cwd:
                 self._cwd = event.cwd
-            if not self._startup_printed:
-                self._startup_printed = True
-                p(
-                    _dim(
-                        f"{event.cwd} · session {event.session_id or ''}"
-                    )
-                    + "\n"
-                )
+            self._session_id = event.session_id or ""
             self._invalidate()
             return
 
