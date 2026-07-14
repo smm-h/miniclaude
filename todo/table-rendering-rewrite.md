@@ -287,7 +287,7 @@ Modals (permission prompts, AskUserQuestion) use `in_terminal` /
 resume. This is the same mechanism as the current fullscreen mode. Verify it works
 in inline mode by testing with a real permission prompt.
 
-### 2f. Printer pathway
+### 2g. Printer pathway
 
 - Non-table output: `printer(text)` → `_raw_write(text)` (goes through
   `patch_stdout` into scrollback) + append `ProseBlock` to `_output_blocks`.
@@ -319,9 +319,9 @@ On resize, after updating the width:
    - ProseBlock line count: `text.count('\n')` (fixed, prose is pre-rendered).
    - TableBlock line count: render at new width, count newlines. Use a cache
      (width-keyed) so repeated resizes don't re-render unnecessarily.
-4. Reprint those blocks in order: ProseBlocks re-emitted via `_raw_write`,
+4. Reprint those blocks in order: ProseBlocks re-emitted via `_terminal_write`,
    TableBlocks rendered via `render_table(data, new_width)` and written via
-   `_raw_write`.
+   `_terminal_write`.
 5. Resume the Application.
 
 Content above the reprinted region (deeper in scrollback) stays at whatever
