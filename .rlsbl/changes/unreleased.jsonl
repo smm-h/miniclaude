@@ -23,3 +23,4 @@
 {"id":"18c22bce7b075411a5bb1b91c73d466e8d8498df2a0f59d1","commits":["f6a69a527ce95932220a3397e580769f428d0432"],"user_facing":false}
 {"id":"18c22c602a037f3e5179bfcfccd744999d9a28c42458188e","commits":["0378d8069a1551599f134ace59dbc74479126c79"],"user_facing":true,"description":"Tables re-render on terminal resize","type":"feature"}
 {"id":"18c22cc2fc0ee9bb59b3328d770c40238059e6f4c1f0e427","commits":["b842ef5cadbc45d5574cc2e76788a5550e723d5d"],"user_facing":false}
+{"id":"18c231de08501f7ee739c8ea74444bae8386d047e2c8e440","commits":["a216d34eb4ef413a41ec61b92fe3eca89eecba39"],"user_facing":true,"description":"Tables rendered during a turn now use the current terminal width instead of the width captured at turn start, so mid-turn resizes no longer produce stale-width tables.","type":"fix"}
