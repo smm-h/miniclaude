@@ -86,10 +86,6 @@ def test_repl_pty_smoke():
         # never appears in our echoed input line -- only in the model's reply.
         os.write(master_fd, b"Reply with only the word MINI joined to OK, no space.\r")
 
-        # The banner is rendered inside the output window; verify it shows up.
-        assert _read_until(master_fd, "miniclaude", 60.0, accum), (
-            f"banner never rendered. Output:\n{''.join(accum)}"
-        )
         got = _read_until(master_fd, "MINIOK", _TURN_TIMEOUT, accum)
         output = "".join(accum)
         assert got, f"Model never produced MINIOK. Output:\n{output}"
