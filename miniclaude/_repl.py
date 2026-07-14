@@ -63,7 +63,7 @@ from miniclaude._dialogs import (
     run_permission_flow,
     run_question_flow,
 )
-from miniclaude._render import StreamRenderer, TableData
+from miniclaude._render import StreamRenderer, TableData, render_table
 from miniclaude._toolline import format_tool_result, format_tool_use
 
 # --- Output block types -------------------------------------------------------
@@ -383,6 +383,17 @@ class Repl:
         refresh_task: asyncio.Task | None = None
         if self._input:
             refresh_task = asyncio.ensure_future(self._refresh_loop())
+            # Wire the on_table callback so tables create TableBlocks (not
+            # ProseBlocks) and render through _raw_write.
+            ctrl = self._input
+            width = self._width
+
+            def _on_table(data: TableData) -> None:
+                ctrl._output_blocks.append(TableBlock(data))
+                rendered = render_table(data, width)
+                ctrl._raw_write(rendered)
+
+            self._renderer.on_table = _on_table
         # Echo the user's input into scrollback
         lines = prompt.strip().splitlines()
         echo = lines[0][:100] + ("…" if len(lines) > 1 or len(lines[0]) > 100 else "")

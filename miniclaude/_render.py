@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from typing import Callable
 
 # SGR codes.
 BOLD = "\033[1m"
@@ -87,6 +88,192 @@ def _truncate_visible(styled: str, maxcols: int) -> str:
     return "".join(out)
 
 
+# -- module-level helpers (pure, no instance state) --------------------------
+
+
+def _style_inline(s: str) -> str:
+    """Apply inline markdown styling; unclosed markers stay literal."""
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        # Inline code `...` (highest precedence: content is not re-parsed).
+        if c == "`":
+            end = s.find("`", i + 1)
+            if end != -1:
+                out.append(CYAN + s[i + 1:end] + RESET)
+                i = end + 1
+                continue
+            out.append(c)
+            i += 1
+            continue
+        # Link [text](url).
+        if c == "[":
+            close = s.find("]", i + 1)
+            if close != -1 and close + 1 < n and s[close + 1] == "(":
+                urlend = s.find(")", close + 2)
+                if urlend != -1:
+                    text = s[i + 1:close]
+                    url = s[close + 2:urlend]
+                    out.append(
+                        UNDERLINE + text + RESET + " (" + DIM + url + RESET + ")"
+                    )
+                    i = urlend + 1
+                    continue
+            out.append(c)
+            i += 1
+            continue
+        # Bold **...** (checked before single-* italic).
+        if s.startswith("**", i):
+            end = s.find("**", i + 2)
+            if end != -1:
+                out.append(BOLD + s[i + 2:end] + RESET)
+                i = end + 2
+                continue
+            out.append(c)
+            i += 1
+            continue
+        # Italic *...* or _..._.
+        if c in "*_":
+            end = s.find(c, i + 1)
+            if end != -1 and end > i + 1:
+                out.append(ITALIC + s[i + 1:end] + RESET)
+                i = end + 1
+                continue
+            out.append(c)
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _split_row(line: str) -> list[str]:
+    """Split a markdown table row into cell texts."""
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _parse_align(cell: str) -> str:
+    """Determine column alignment from a separator cell (e.g. ':---:', '---:')."""
+    c = cell.strip()
+    left = c.startswith(":")
+    right = c.endswith(":")
+    if left and right:
+        return "center"
+    if right:
+        return "right"
+    return "left"
+
+
+def _fit_widths(col_w: list[int], width: int) -> list[int]:
+    """Shrink column widths so the table fits within ``width`` columns."""
+    num_cols = len(col_w)
+
+    def total(cw: list[int]) -> int:
+        return sum(cw) + 3 * num_cols + 1
+
+    cw = list(col_w)
+    while total(cw) > width:
+        j = max(range(num_cols), key=lambda k: cw[k])
+        if cw[j] <= 1:
+            break
+        cw[j] -= 1
+    return cw
+
+
+def _pad(styled: str, visible_width: int, target_width: int, align: str) -> str:
+    """Pad (or truncate) a styled cell to ``target_width`` visible columns."""
+    if visible_width > target_width:
+        styled = _truncate_visible(styled, target_width)
+        # Measure actual visible width after truncation; wide chars may
+        # create a gap (e.g. a 2-col emoji that doesn't fit before the
+        # ellipsis leaves the result shorter than target).
+        visible_width = _visible_len(styled)
+    pad = target_width - visible_width
+    if align == "right":
+        return " " * pad + styled
+    if align == "center":
+        lp = pad // 2
+        return " " * lp + styled + " " * (pad - lp)
+    return styled + " " * pad
+
+
+def _render_table_row(
+    cells: list[tuple[str, int]],
+    col_w: list[int],
+    aligns: list[str],
+) -> str:
+    """Render one table row as ``| cell | cell | ... |\\n``."""
+    parts = [_pad(styled, w, col_w[j], aligns[j]) for j, (styled, w) in enumerate(cells)]
+    return "| " + " | ".join(parts) + " |\n"
+
+
+def _render_separator(col_w: list[int]) -> str:
+    """Render a horizontal separator row with box-drawing dashes."""
+    return "|" + "|".join("─" * (w + 2) for w in col_w) + "|\n"
+
+
+# -- render_table: single rendering codepath for tables ----------------------
+
+
+def render_table(data: TableData, width: int) -> str:
+    """Render a TableData into an ANSI-styled string at the given terminal width.
+
+    This is the SINGLE rendering codepath for tables, used by:
+    - _flush_table (streaming path, when no callback)
+    - The on_table callback in _PromptController (streaming path, with callback)
+    - materialize_blocks (resize path)
+    """
+    num_cols = max(
+        (max(len(r) for r in data.header_rows) if data.header_rows else 0),
+        (max(len(r) for r in data.body_rows) if data.body_rows else 0),
+        1,
+    )
+    aligns = list(data.aligns) if data.aligns else ["left"] * num_cols
+    # Pad aligns to num_cols if short.
+    while len(aligns) < num_cols:
+        aligns.append("left")
+
+    def make_cell(text: str, is_header: bool) -> tuple[str, int]:
+        styled = _style_inline(text)
+        if is_header:
+            styled = BOLD + styled + RESET
+        return styled, _visible_len(styled)
+
+    def build(rows: list[list[str]], is_header: bool) -> list[list[tuple[str, int]]]:
+        grid: list[list[tuple[str, int]]] = []
+        for r in rows:
+            grid.append(
+                [make_cell(r[j] if j < len(r) else "", is_header) for j in range(num_cols)]
+            )
+        return grid
+
+    header_grid = build(data.header_rows, True)
+    body_grid = build(data.body_rows, False)
+
+    col_w = [0] * num_cols
+    for grid in (header_grid, body_grid):
+        for cells in grid:
+            for j, (_s, w) in enumerate(cells):
+                col_w[j] = max(col_w[j], w)
+    col_w = _fit_widths(col_w, width)
+
+    lines: list[str] = []
+    for cells in header_grid:
+        lines.append(_render_table_row(cells, col_w, aligns))
+    if header_grid:
+        lines.append(_render_separator(col_w))
+    for cells in body_grid:
+        lines.append(_render_table_row(cells, col_w, aligns))
+    return "".join(lines)
+
+
 class StreamRenderer:
     """Line-grain streaming renderer for assistant prose and thinking blocks."""
 
@@ -100,6 +287,10 @@ class StreamRenderer:
         self._in_code = False
         # Buffered table rows (raw line strings), text mode only.
         self._table: list[str] = []
+        # Optional callback for table output (set by Repl when _PromptController
+        # is active). When set, _flush_table fires it with a TableData and
+        # returns "". When not set, _flush_table renders the table directly.
+        self.on_table: Callable[[TableData], None] | None = None
 
     # -- public feed API -------------------------------------------------
 
@@ -226,65 +417,8 @@ class StreamRenderer:
         m = _BULLET_RE.match(line)
         if m:
             indent, rest = m.group(1), m.group(2)
-            return indent + DIM + "• " + RESET + self._style_inline(rest) + "\n"
-        return self._style_inline(line) + "\n"
-
-    def _style_inline(self, s: str) -> str:
-        """Apply inline markdown styling; unclosed markers stay literal."""
-        out: list[str] = []
-        i = 0
-        n = len(s)
-        while i < n:
-            c = s[i]
-            # Inline code `...` (highest precedence: content is not re-parsed).
-            if c == "`":
-                end = s.find("`", i + 1)
-                if end != -1:
-                    out.append(CYAN + s[i + 1:end] + RESET)
-                    i = end + 1
-                    continue
-                out.append(c)
-                i += 1
-                continue
-            # Link [text](url).
-            if c == "[":
-                close = s.find("]", i + 1)
-                if close != -1 and close + 1 < n and s[close + 1] == "(":
-                    urlend = s.find(")", close + 2)
-                    if urlend != -1:
-                        text = s[i + 1:close]
-                        url = s[close + 2:urlend]
-                        out.append(
-                            UNDERLINE + text + RESET + " (" + DIM + url + RESET + ")"
-                        )
-                        i = urlend + 1
-                        continue
-                out.append(c)
-                i += 1
-                continue
-            # Bold **...** (checked before single-* italic).
-            if s.startswith("**", i):
-                end = s.find("**", i + 2)
-                if end != -1:
-                    out.append(BOLD + s[i + 2:end] + RESET)
-                    i = end + 2
-                    continue
-                out.append(c)
-                i += 1
-                continue
-            # Italic *...* or _..._.
-            if c in "*_":
-                end = s.find(c, i + 1)
-                if end != -1 and end > i + 1:
-                    out.append(ITALIC + s[i + 1:end] + RESET)
-                    i = end + 1
-                    continue
-                out.append(c)
-                i += 1
-                continue
-            out.append(c)
-            i += 1
-        return "".join(out)
+            return indent + DIM + "• " + RESET + _style_inline(rest) + "\n"
+        return _style_inline(line) + "\n"
 
     # -- table rendering -------------------------------------------------
 
@@ -293,7 +427,7 @@ class StreamRenderer:
             return ""
         rows_raw = self._table
         self._table = []
-        parsed = [self._split_row(l) for l in rows_raw]
+        parsed = [_split_row(line) for line in rows_raw]
 
         sep_idx: int | None = None
         for i, cells in enumerate(parsed):
@@ -307,7 +441,7 @@ class StreamRenderer:
         if sep_idx is not None:
             for j, c in enumerate(parsed[sep_idx]):
                 if j < num_cols:
-                    aligns[j] = self._parse_align(c)
+                    aligns[j] = _parse_align(c)
 
         if sep_idx is not None:
             header_rows = parsed[:sep_idx]
@@ -316,94 +450,10 @@ class StreamRenderer:
             header_rows = parsed[:1]
             body_rows = parsed[1:]
 
-        def make_cell(text: str, is_header: bool) -> tuple[str, int]:
-            styled = self._style_inline(text)
-            if is_header:
-                styled = BOLD + styled + RESET
-            return styled, _visible_len(styled)
+        data = TableData(header_rows=header_rows, body_rows=body_rows, aligns=aligns)
 
-        def build(rows: list[list[str]], is_header: bool) -> list[list[tuple[str, int]]]:
-            grid: list[list[tuple[str, int]]] = []
-            for r in rows:
-                grid.append(
-                    [make_cell(r[j] if j < len(r) else "", is_header) for j in range(num_cols)]
-                )
-            return grid
+        if self.on_table is not None:
+            self.on_table(data)
+            return ""
 
-        header_grid = build(header_rows, True)
-        body_grid = build(body_rows, False)
-
-        col_w = [0] * num_cols
-        for grid in (header_grid, body_grid):
-            for cells in grid:
-                for j, (_s, w) in enumerate(cells):
-                    col_w[j] = max(col_w[j], w)
-        col_w = self._fit_widths(col_w)
-
-        lines: list[str] = []
-        for cells in header_grid:
-            lines.append(self._render_table_row(cells, col_w, aligns))
-        if header_grid:
-            lines.append(self._render_separator(col_w))
-        for cells in body_grid:
-            lines.append(self._render_table_row(cells, col_w, aligns))
-        return "".join(lines)
-
-    def _split_row(self, line: str) -> list[str]:
-        s = line.strip()
-        if s.startswith("|"):
-            s = s[1:]
-        if s.endswith("|"):
-            s = s[:-1]
-        return [c.strip() for c in s.split("|")]
-
-    def _parse_align(self, cell: str) -> str:
-        c = cell.strip()
-        left = c.startswith(":")
-        right = c.endswith(":")
-        if left and right:
-            return "center"
-        if right:
-            return "right"
-        return "left"
-
-    def _fit_widths(self, col_w: list[int]) -> list[int]:
-        num_cols = len(col_w)
-
-        def total(cw: list[int]) -> int:
-            return sum(cw) + 3 * num_cols + 1
-
-        cw = list(col_w)
-        while total(cw) > self.width:
-            j = max(range(num_cols), key=lambda k: cw[k])
-            if cw[j] <= 1:
-                break
-            cw[j] -= 1
-        return cw
-
-    def _render_table_row(
-        self,
-        cells: list[tuple[str, int]],
-        col_w: list[int],
-        aligns: list[str],
-    ) -> str:
-        parts = [self._pad(styled, w, col_w[j], aligns[j]) for j, (styled, w) in enumerate(cells)]
-        return "| " + " | ".join(parts) + " |\n"
-
-    def _render_separator(self, col_w: list[int]) -> str:
-        return "|" + "|".join("─" * (w + 2) for w in col_w) + "|\n"
-
-    def _pad(self, styled: str, w: int, target: int, align: str) -> str:
-        if w > target:
-            styled = _truncate_visible(styled, target)
-            # Measure actual visible width after truncation; wide chars may
-            # create a gap (e.g. a 2-col emoji that doesn't fit before the
-            # ellipsis leaves the result shorter than target).
-            w = _visible_len(styled)
-        pad = target - w
-        if align == "right":
-            return " " * pad + styled
-        if align == "center":
-            lp = pad // 2
-            return " " * lp + styled + " " * (pad - lp)
-        return styled + " " * pad
+        return render_table(data, self.width)
