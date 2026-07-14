@@ -148,6 +148,7 @@ def render_howmuchleft(
     cwd: str,
     cost_usd: float,
     rate_limits: dict | None = None,
+    session_id: str = "",
 ) -> str:
     """Spawn howmuchleft and return 3 lines of ANSI status text.
 
@@ -163,6 +164,8 @@ def render_howmuchleft(
         "cwd": cwd or os.getcwd(),
         "cost": {"total_cost_usd": cost_usd},
     }
+    if session_id:
+        stdin_data["session_id"] = session_id
     if ctx_pct is not None:
         stdin_data["context_window"] = {"used_percentage": float(ctx_pct)}
     else:
@@ -201,11 +204,14 @@ class _HowMuchLeftCache:
         cost_usd: float,
         rate_limits: dict | None,
         ttl: float,
+        session_id: str = "",
     ) -> str:
         now = time.monotonic()
         if self._cached and (now - self._last_time) < ttl:
             return self._cached
-        result = render_howmuchleft(model, ctx_pct, cwd, cost_usd, rate_limits)
+        result = render_howmuchleft(
+            model, ctx_pct, cwd, cost_usd, rate_limits, session_id=session_id
+        )
         if result != _HOWMUCHLEFT_NOT_FOUND or not self._cached:
             self._cached = result
             self._last_time = now
@@ -309,6 +315,7 @@ class Repl:
             self._cost_usd,
             self._rate_limits,
             ttl=ttl,
+            session_id=self._session_id,
         )
 
     async def _refresh_loop(self) -> None:
