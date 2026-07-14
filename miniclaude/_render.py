@@ -181,8 +181,16 @@ class StreamRenderer:
         stripped = line.lstrip()
         if self._in_code:
             if stripped.startswith("```"):
+                # Fence close: flush any table buffered inside the code block,
+                # then render the closing fence itself.
+                out = self._flush_table()
                 self._in_code = False
-                return DIM + line + RESET + "\n"
+                return out + DIM + line + RESET + "\n"
+            # Table rows inside code fences are rendered as aligned ASCII
+            # tables (LLMs frequently wrap markdown tables in ``` fences).
+            if stripped.startswith("|"):
+                self._table.append(line)
+                return ""
             # Code body: two-space indent, no markdown, no recolor.
             return "  " + line + "\n"
         if stripped.startswith("```"):

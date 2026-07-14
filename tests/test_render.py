@@ -105,6 +105,9 @@ FIXTURES: dict[str, list[Segment]] = {
                  "| --- | --- |\n"
                  "| normal | data |\n"),
     ],
+    "table_inside_code_fence": [
+        ("text", "```\n| A | B |\n| - | - |\n| 1 | 2 |\n```\ntail\n"),
+    ],
 }
 
 CHUNK_STRATEGIES: list[list[int]] = [
@@ -479,3 +482,29 @@ def test_table_mixed_content() -> None:
     assert "**" not in plain
     # Bold styling is applied in the output.
     assert BOLD in out
+
+
+# -- tables inside code fences ---------------------------------------------
+
+
+def test_table_inside_code_fence() -> None:
+    """Tables inside ``` fences are rendered as aligned ASCII tables, not raw markdown."""
+    out = _single("```\n| A | B |\n| - | - |\n| 1 | 2 |\n```\ntail\n")
+    plain = _strip_ansi(out)
+    # The table must use box-drawing separators (rendered, not raw pipes).
+    assert "─" in plain
+    # The table cells must be present.
+    assert "| A " in plain
+    assert "| 1 " in plain
+    # The fence open line is rendered dim.
+    assert DIM + "```" + RESET + "\n" in out
+    # The fence close line is rendered dim.
+    lines = out.split("\n")
+    # Find the closing fence (second occurrence of dim ```)
+    dim_fence = DIM + "```" + RESET
+    fence_count = sum(1 for l in lines if l == dim_fence)
+    assert fence_count == 2, f"expected 2 dim fence lines, got {fence_count}"
+    # The trailing prose line appears after the table.
+    assert plain.endswith("tail\n")
+    # Prose line comes after the box-drawing separator.
+    assert plain.index("─") < plain.index("tail")
