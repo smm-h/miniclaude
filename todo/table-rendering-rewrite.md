@@ -17,6 +17,19 @@ flows into native terminal scrollback via `patch_stdout(raw=True)`. Scrolling is
 the terminal's native smooth scroll. The screen is cleared on launch (prior
 terminal content is not shown).
 
+Three output pathways exist (defined across phases 0 and 2):
+
+- `printer(text)`: streaming prose output. In fullscreen (Phase 0): appends to
+  `_output_lines` + appends ProseBlock to `_output_blocks`. In inline (Phase 2):
+  `sys.stdout.write` under `patch_stdout` + appends ProseBlock.
+- `_raw_write(text)`: streaming table output (used by `on_table` callback). Same
+  mechanism as printer but appends TableBlock instead of ProseBlock.
+- `_terminal_write(text)`: direct terminal write bypassing `patch_stdout`. Uses
+  `app.output.write_raw()` + `output.flush()`. Used ONLY inside `in_terminal`
+  blocks (SIGWINCH reprint). Required because `patch_stdout`'s `StdoutProxy`
+  defers writes during `in_terminal` — the deferred writes only execute after
+  `in_terminal` exits, defeating the reprint.
+
 ## Phase 0 -- Structured output model
 
 ### 0a. Data types and printer split
@@ -33,15 +46,19 @@ Define in `_render.py` (or a new `_types.py` if cleaner):
 In `_PromptController` (`_repl.py`):
 
 - Add `_output_blocks: list[OutputBlock]`.
-- Split the printer into two functions:
-  - `_raw_write(text: str)`: just `sys.stdout.write(text)` under `patch_stdout`.
-    No block tracking. Used by the `on_table` callback for table display.
-  - `printer(text: str)`: calls `_raw_write(text)`, then appends
-    `ProseBlock(text)` to `_output_blocks`, then increments
-    `_output_newline_count`.
+- Split the printer into two logical paths:
+  - `printer(text: str)`: appends `ProseBlock(text)` to `_output_blocks` +
+    writes to display. During Phase 0 (fullscreen still active): display =
+    append to `_output_lines` + increment `_output_newline_count` (preserving
+    current fullscreen behavior). Phase 2 changes display to
+    `sys.stdout.write(text)` under `patch_stdout`.
+  - The `on_table` callback: appends `TableBlock(data)` to `_output_blocks` +
+    writes rendered text to display + increments `_output_newline_count`. Same
+    display mechanism as printer (fullscreen in Phase 0, patch_stdout in Phase 2).
 
-This split ensures tables never create a ProseBlock (the `on_table` callback uses
-`_raw_write`, not `printer`), eliminating double-counting.
+This split ensures tables create TableBlocks (not ProseBlocks), eliminating
+double-counting. The display mechanism is phase-dependent but the block-tracking
+logic is stable across phases.
 
 Verification: all existing tests pass unchanged (tests use `Repl` directly, not
 `_PromptController`, so the printer split is invisible to them).
@@ -61,6 +78,16 @@ module-level function. This is the SINGLE rendering codepath for tables, used by
 - `_flush_table` (streaming path, when no callback)
 - The `on_table` callback in `_PromptController` (streaming path, with callback)
 - The materialization function (resize path, Phase 3)
+
+This extraction also requires extracting these helper functions from
+StreamRenderer to module-level (they are all pure — their only instance state is
+`width`, which becomes a parameter):
+- `_style_inline` (shared with `_render_prose_line` — coordinate carefully)
+- `_fit_widths(col_widths, width) -> list[int]`
+- `_pad(styled, visible_width, target_width, align) -> str`
+- `_split_row(line) -> list[str]`
+- `_parse_align(cells) -> list[str]`
+- `_render_table_row`, `_render_separator` (replaced in Phase 1a)
 
 The `on_table` callback (wired in `Repl._run_turn` each time a new
 `StreamRenderer` is created) does three things:
@@ -246,7 +273,14 @@ Keep `FormattedTextControl(lambda: ANSI(hml_output))` as a layout child (below
 the Frame). `ANSI()` parses truecolor escapes; `DEPTH_24_BIT` re-emits them
 losslessly. Refresh via the `refresh_interval=0.25` on the Application.
 
-### 2e. Verify modals
+### 2e. Remove dead tracking
+
+Remove `_output_newline_count` tracking from `printer` and the `on_table`
+callback. Its only consumer was `_get_cursor_position` (for auto-scroll in
+fullscreen mode), which Phase 2a removed. The reprint budget calculation
+(Phase 3) computes line counts from blocks, not from this counter.
+
+### 2f. Verify modals
 
 Modals (permission prompts, AskUserQuestion) use `in_terminal` /
 `run_in_terminal` to suspend the inline Application, run the dialog widgets, and
@@ -298,6 +332,29 @@ Flash mitigation: wrap the clear+reprint in synchronized output sequences
 (`\x1b[?2026h` before, `\x1b[?2026l` after) so the terminal batches the update
 into a single frame. Most modern terminals support this (kitty, WezTerm, VTE,
 iTerm2). Terminals that don't support it show a brief flash.
+
+CRITICAL: all writes during the reprint MUST use `_terminal_write` (which calls
+`app.output.write_raw()` + `output.flush()`), NOT `_raw_write` or `printer`.
+`patch_stdout`'s `StdoutProxy` defers `sys.stdout.write` calls during
+`in_terminal` — they execute only AFTER `in_terminal` exits, which would cause
+the clear-screen and reprinted content to appear after the managed area has
+already been redrawn. `_terminal_write` bypasses `StdoutProxy` entirely.
+
+CRITICAL: the reprint loop must be fully synchronous (no `await` between clear
+and finish). If any `await` is inserted, the event loop could process streaming
+events, causing token output to interleave with the reprint.
+
+Debounce: ignore SIGWINCH if the last reprint was less than 100ms ago. Schedule
+one reprint for 100ms later. Prevents wasteful work during rapid drag-resizing.
+
+Reprint budget: `terminal_height - managed_area_height` lines (not full terminal
+height). The managed area (Frame borders 2 + input 1-10 + howmuchleft 3 = 6-15
+lines) is re-rendered by prompt_toolkit below the reprinted content.
+
+ProseBlock line count for the budget: use
+`sum(max(1, ceil(len(line) / new_width)) for line in text.split('\n'))` as an
+approximation of physical lines at the new width. Using `len()` instead of
+`_visible_len()` is fast and close enough for "roughly a screenful."
 
 ### 3c. ProseBlock line count note
 
@@ -393,12 +450,17 @@ Changelog entries:
 
 ## Effort estimate
 
-Phase 0: ~200 lines of new/changed code, moderate complexity.
-Phase 1: ~300 lines, high complexity (cell wrapping with ANSI state is the
-hardest single piece).
-Phase 2: ~150 lines changed, moderate complexity (prompt_toolkit layout work).
-Phase 3: ~100 lines, moderate complexity (SIGWINCH + clear/reprint).
-Phase 4: ~200 lines of test code.
+Phase 0: ~250 lines of new/changed code, moderate complexity. The helper
+function extraction (0b) is more work than it looks — 6 functions move from
+instance methods to module-level, and `_style_inline` is shared with prose.
+Phase 1: ~350 lines, high complexity (cell wrapping with ANSI state is the
+hardest single piece). The ANSI state machine must handle compound SGR
+sequences (e.g. `\x1b[2;90m` sets two attributes in one escape).
+Phase 2: ~200 lines changed, moderate complexity (prompt_toolkit layout work +
+three output pathway definitions).
+Phase 3: ~150 lines, moderate complexity (SIGWINCH + _terminal_write bypass +
+debounce + budget calculation).
+Phase 4: ~250 lines of test code.
 
-Total: ~950 lines across 5 files. The cell wrapping ANSI state machine (1b)
+Total: ~1200 lines across 5 files. The cell wrapping ANSI state machine (1b)
 is the critical path.
