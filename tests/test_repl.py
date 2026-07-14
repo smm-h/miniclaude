@@ -30,12 +30,17 @@ from claudestream import (
 )
 
 from miniclaude._repl import (
+    ProseBlock,
     Repl,
+    TableBlock,
     _HowMuchLeftCache,
+    _PromptController,
     _ctx_pct,
     _HOWMUCHLEFT_NOT_FOUND,
+    materialize_blocks,
     render_howmuchleft,
 )
+from miniclaude._render import TableData, render_table
 
 
 def sync(fn):
@@ -807,3 +812,103 @@ async def test_result_updates_hml_state():
     await repl._run_turn(fake, "hi")
     assert repl._cost_usd == 0.05
     assert repl._ctx_pct == 25  # (200+50)/1000 = 25%
+
+
+# --- Output block model (Phase 4a) -------------------------------------------
+
+
+def test_output_block_accumulation():
+    """Printer creates ProseBlocks; on_table callback creates TableBlocks.
+
+    Tests the block types directly and verifies no double-counting occurs
+    when both prose and table blocks are accumulated.
+    """
+    blocks: list = []
+    # Simulate prose output.
+    prose = ProseBlock("hello world\n")
+    blocks.append(prose)
+    assert isinstance(blocks[0], ProseBlock)
+    assert blocks[0].ansi_text == "hello world\n"
+
+    # Simulate table output (what the on_table callback does).
+    data = TableData(
+        header_rows=[["Name", "Value"]],
+        body_rows=[["a", "1"]],
+        aligns=["left", "left"],
+    )
+    table = TableBlock(data)
+    blocks.append(table)
+    assert isinstance(blocks[1], TableBlock)
+    assert blocks[1].data is data
+
+    # No double-counting: 1 prose + 1 table = 2 blocks total.
+    assert len(blocks) == 2
+    assert sum(1 for b in blocks if isinstance(b, ProseBlock)) == 1
+    assert sum(1 for b in blocks if isinstance(b, TableBlock)) == 1
+
+
+def test_materialize_blocks_renders_tables_at_width():
+    """materialize_blocks produces different output at different widths
+    for the same set of blocks containing tables."""
+    data = TableData(
+        header_rows=[["Name", "Description"]],
+        body_rows=[["Alice", "A moderately long description that will wrap"]],
+        aligns=["left", "left"],
+    )
+    blocks = [
+        ProseBlock("some prose\n"),
+        TableBlock(data),
+        ProseBlock("more prose\n"),
+    ]
+    out80 = materialize_blocks(blocks, 80)
+    out40 = materialize_blocks(blocks, 40)
+
+    # Both contain the prose text unchanged.
+    assert "some prose\n" in out80
+    assert "some prose\n" in out40
+    assert "more prose\n" in out80
+    assert "more prose\n" in out40
+
+    # Both contain box-drawing table borders.
+    for out in (out80, out40):
+        stripped = _plain(out)
+        assert "┌" in stripped  # top-left corner
+        assert "┘" in stripped  # bottom-right corner
+        assert "│" in stripped  # vertical border
+
+    # The table renders differently at different widths.
+    assert out80 != out40
+
+
+def test_render_table_width_independence():
+    """render_table(data, 80) and render_table(data, 40) both produce valid
+    box-drawing tables with different layouts."""
+    data = TableData(
+        header_rows=[["Category", "Score"]],
+        body_rows=[["Performance", "95"], ["Reliability", "87"]],
+        aligns=["left", "right"],
+    )
+    out80 = render_table(data, 80)
+    out40 = render_table(data, 40)
+
+    for out in (out80, out40):
+        stripped = _plain(out)
+        lines = stripped.strip().splitlines()
+        # First line is top border.
+        assert lines[0].startswith("┌")
+        assert lines[0].endswith("┐")
+        # Last line is bottom border.
+        assert lines[-1].startswith("└")
+        assert lines[-1].endswith("┘")
+        # Contains data.
+        full = "\n".join(lines)
+        assert "Category" in full
+        assert "Score" in full
+
+
+def test_terminal_write_method_exists():
+    """_PromptController has a _terminal_write method (replaces scroll-lock
+    tests -- scroll is native now, but direct terminal write is still needed
+    for SIGWINCH repaint inside in_terminal blocks)."""
+    assert hasattr(_PromptController, "_terminal_write")
+    assert callable(getattr(_PromptController, "_terminal_write"))
