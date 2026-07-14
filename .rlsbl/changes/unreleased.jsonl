@@ -11,3 +11,4 @@
 {"id":"18c219b7112c6c155d95a86fe1174e8584b9111d3bfccc09","commits":["b85735da1189010eb423e790070dd7e8ce41c246"],"user_facing":true,"description":"**Fix.** Table rendering correctly aligns columns containing emoji and wide characters, with golden tests for alignment, truncation, and mixed content.","type":"fix"}
 {"id":"18c219ce551e66835834d5b2c2894ce093269590c1482dc4","commits":["45fdcfc6348e1ed4d1845c7044a69486528929ca"],"user_facing":true,"description":"**Breaking.** Removed the startup banner. Session and cwd info provided by howmuchleft.","type":"breaking"}
 {"id":"18c219d2ac5a621d5fbfd1ee8e354379b6d807119ec685d1","commits":["3a686b078bb48757ae281f9a65db6c0c018ff650"],"user_facing":true,"description":"**Breaking.** Rate limit info no longer printed per-turn; displayed via howmuchleft status lines.","type":"breaking"}
+{"id":"18c219da5b59072f058bb709ede644789b8d2db84547438b","commits":["68ea0ad2e896d7343bb22224e7122c9bd1757621"],"user_facing":false}
