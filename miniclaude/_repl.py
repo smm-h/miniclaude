@@ -366,10 +366,11 @@ class Repl:
 
     async def run(self) -> None:
         """Production run: inline Application with input/status regions."""
-        # Clear the visible screen and home the cursor. Prior terminal
-        # content (shell prompts, launcher output) scrolls into scrollback
-        # history and is no longer visible.
-        sys.stdout.write("\x1b[2J\x1b[H")
+        # Erase scrollback + visible screen: wipe saved lines, home
+        # cursor, then erase from cursor to end of screen.  Prior terminal
+        # content (shell prompts, launcher output) is genuinely erased
+        # rather than pushed into scrollback.
+        sys.stdout.write("\x1b[3J\x1b[H\x1b[J")
         sys.stdout.flush()
         # Push the cursor near the bottom of the terminal so that
         # prompt_toolkit's _min_available_height is ~16, causing the
@@ -859,8 +860,10 @@ class _PromptController:
             try:
                 # Synchronized output start (batch into single frame).
                 self._terminal_write("\x1b[?2026h")
-                # Clear visible screen and home cursor.
-                self._terminal_write("\x1b[2J\x1b[H")
+                # Erase scrollback + visible area: wipe saved lines, home
+                # cursor, then erase from cursor to end of screen.  This
+                # prevents old content from lingering in scrollback on resize.
+                self._terminal_write("\x1b[3J\x1b[H\x1b[J")
                 # Walk blocks backwards to find the last screenful.
                 block_indices: list[int] = []
                 lines_used = 0
@@ -894,6 +897,11 @@ class _PromptController:
                         self._terminal_write(block.ansi_text)
                     elif isinstance(block, TableBlock):
                         self._terminal_write(render_table(block.data, new_width))
+                # Push cursor near bottom so prompt_toolkit redraws
+                # the managed area at the bottom of the terminal.
+                remaining = max(0, term_height - 16 - lines_used)
+                if remaining > 0:
+                    self._terminal_write("\n" * remaining)
                 # Synchronized output end.
                 self._terminal_write("\x1b[?2026l")
             except Exception as exc:
