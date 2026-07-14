@@ -22,3 +22,4 @@
 {"id":"18c22bc7cbc68e72b7fb2358fee646d8977fe7a0f074422e","commits":["fdf28afce3afce43f72f378aec181eb66e75cd32"],"user_facing":true,"description":"**New feature.** Tables render with box-drawing borders, cell wrapping (word-boundary breaking, ANSI state preservation), and a constraint-based column width solver that prioritizes header readability.","type":"feature"}
 {"id":"18c22bce7b075411a5bb1b91c73d466e8d8498df2a0f59d1","commits":["f6a69a527ce95932220a3397e580769f428d0432"],"user_facing":false}
 {"id":"18c22c602a037f3e5179bfcfccd744999d9a28c42458188e","commits":["0378d8069a1551599f134ace59dbc74479126c79"],"user_facing":true,"description":"Tables re-render on terminal resize","type":"feature"}
+{"id":"18c22cc2fc0ee9bb59b3328d770c40238059e6f4c1f0e427","commits":["b842ef5cadbc45d5574cc2e76788a5550e723d5d"],"user_facing":false}
