@@ -449,14 +449,6 @@ class Repl:
             return
 
         if isinstance(event, RateLimit):
-            if event.status != "allowed" or getattr(event, "utilization", 0) >= 0.8:
-                parts = [f"rate limit: {event.status}"]
-                if event.rate_limit_type:
-                    parts.append(event.rate_limit_type)
-                util = getattr(event, "utilization", None)
-                if util is not None and util > 0:
-                    parts.append(f"{util:.0%}")
-                p(_yellow(" · ".join(parts)) + "\n")
             return
 
         if isinstance(event, BudgetThreshold):
