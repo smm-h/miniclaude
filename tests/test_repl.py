@@ -151,7 +151,6 @@ def make_repl(fake, interaction=None, printer=None):
         session_factory=lambda: None,
         interaction=interaction,
         printer=printer,
-        version="9.9.9",
         width=80,
     )
     repl._session = fake
@@ -318,11 +317,12 @@ def test_ctx_pct_helper():
     assert _ctx_pct({"m": {"inputTokens": 5}}, "m") is None  # no contextWindow
 
 
-# --- SystemInit startup line -------------------------------------------------
+# --- SystemInit state assignment ---------------------------------------------
 
 
 @sync
-async def test_system_init_prints_startup_line_once():
+async def test_system_init_sets_state_without_printing():
+    """SystemInit assigns model/mode/cwd/session_id on the Repl and prints nothing."""
     init = SystemInit(
         type="system", cwd="/proj", model="haiku",
         permission_mode="default", session_id="sess-1",
@@ -331,12 +331,15 @@ async def test_system_init_prints_startup_line_once():
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
-    # Banner ("miniclaude 9.9.9") prints in run(), not in _run_turn.
-    assert "miniclaude 9.9.9" not in plain
-    # SystemInit prints cwd + session id (once despite two events).
-    assert plain.count("/proj") == 1
-    assert "sess-1" in plain
-    # Echo line appears.
+    # No startup line printed (no cwd/session in output).
+    assert "/proj" not in plain
+    assert "sess-1" not in plain
+    # State was stored correctly.
+    assert repl._model == "haiku"
+    assert repl._mode == "default"
+    assert repl._cwd == "/proj"
+    assert repl._session_id == "sess-1"
+    # Echo line still appears.
     assert "> hi" in plain
 
 
@@ -724,12 +727,12 @@ def test_hml_cache_fallback_on_error(monkeypatch):
     assert "good" in r2
 
 
-# --- Banner not repeated by SystemInit ---------------------------------------
+# --- No banner in turn output ------------------------------------------------
 
 
 @sync
-async def test_banner_not_repeated_by_system_init():
-    """After SystemInit, the banner string is NOT printed in the turn output."""
+async def test_no_banner_in_turn_output():
+    """No banner or startup info is printed during a turn."""
     init = SystemInit(
         type="system", cwd="/proj", model="haiku",
         permission_mode="default", session_id="sess-1",
@@ -739,45 +742,29 @@ async def test_banner_not_repeated_by_system_init():
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
     assert "miniclaude" not in plain
-    assert "/proj" in plain
-    assert "sess-1" in plain
+    # SystemInit no longer prints cwd/session_id to output.
+    assert "/proj" not in plain
+    assert "sess-1" not in plain
 
 
-# --- RateLimit filtering -----------------------------------------------------
+# --- RateLimit silently ignored -----------------------------------------------
 
 
 @sync
-async def test_rate_limit_allowed_is_suppressed():
-    """Allowed with low utilization -> nothing printed."""
-    rl = RateLimit(type="system", status="allowed", rate_limit_type="tokens", utilization=0.0)
-    fake = FakeSession(scripts=[[rl, _result()]])
+async def test_rate_limit_silently_ignored():
+    """All RateLimit events are silently ignored (howmuchleft handles display)."""
+    events = [
+        RateLimit(type="system", status="allowed", rate_limit_type="tokens", utilization=0.0),
+        RateLimit(type="system", status="allowed", rate_limit_type="tokens", utilization=0.9),
+        RateLimit(type="system", status="throttled", rate_limit_type="tokens", utilization=0.5),
+        _result(),
+    ]
+    fake = FakeSession(scripts=[events])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
     assert "rate limit" not in plain
-
-
-@sync
-async def test_rate_limit_high_utilization_is_shown():
-    """Allowed with high utilization (>=0.8) -> printed."""
-    rl = RateLimit(type="system", status="allowed", rate_limit_type="tokens", utilization=0.9)
-    fake = FakeSession(scripts=[[rl, _result()]])
-    repl, printer = make_repl(fake)
-    await repl._run_turn(fake, "hi")
-    plain = _plain(printer.text)
-    assert "rate limit: allowed" in plain
-    assert "90%" in plain
-
-
-@sync
-async def test_rate_limit_not_allowed_is_shown():
-    """Non-allowed status (e.g. throttled) -> always printed."""
-    rl = RateLimit(type="system", status="throttled", rate_limit_type="tokens", utilization=0.5)
-    fake = FakeSession(scripts=[[rl, _result()]])
-    repl, printer = make_repl(fake)
-    await repl._run_turn(fake, "hi")
-    plain = _plain(printer.text)
-    assert "rate limit: throttled" in plain
+    assert "throttled" not in plain
 
 
 # --- Echo line ----------------------------------------------------------------
