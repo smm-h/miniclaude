@@ -13,3 +13,4 @@
 {"id":"18c219d2ac5a621d5fbfd1ee8e354379b6d807119ec685d1","commits":["3a686b078bb48757ae281f9a65db6c0c018ff650"],"user_facing":true,"description":"**Breaking.** Rate limit info no longer printed per-turn; displayed via howmuchleft status lines.","type":"breaking"}
 {"id":"18c219da5b59072f058bb709ede644789b8d2db84547438b","commits":["68ea0ad2e896d7343bb22224e7122c9bd1757621"],"user_facing":false}
 {"id":"18c219ea6fa6f95625d8b2c663554130b982e3b472dcdb8d","commits":["7963b9ad49b91218539ab465bd40ceee5e9ee844"],"user_facing":false}
+{"id":"18c219efbeed24de4bf38fd0ac3d4c5888d5af01d70d851a","commits":["f2943b093c39dc355473eb5120e64cde35a55801"],"user_facing":false}
