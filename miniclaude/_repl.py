@@ -849,45 +849,48 @@ class _PromptController:
         budget = max(1, term_height - self._MANAGED_AREA_HEIGHT)
 
         async with in_terminal():
-            # Synchronized output start (batch into single frame).
-            self._terminal_write("\x1b[?2026h")
-            # Clear visible screen and home cursor.
-            self._terminal_write("\x1b[2J\x1b[H")
-            # Walk blocks backwards to find the last screenful.
-            block_indices: list[int] = []
-            lines_used = 0
-            for i in range(len(self._output_blocks) - 1, -1, -1):
-                block = self._output_blocks[i]
-                if isinstance(block, ProseBlock):
-                    # Approximate physical line count at new width.
-                    block_lines = 0
-                    for line in block.ansi_text.split("\n"):
-                        block_lines += max(1, math.ceil(len(line) / new_width)) if line else 1
-                    # The final empty string from trailing \n should not add a line.
-                    if block.ansi_text.endswith("\n"):
-                        block_lines -= 1
-                    block_lines = max(block_lines, 0)
-                elif isinstance(block, TableBlock):
-                    rendered = render_table(block.data, new_width)
-                    block_lines = rendered.count("\n")
-                else:
-                    continue
-                if lines_used + block_lines > budget and block_indices:
-                    break
-                block_indices.append(i)
-                lines_used += block_lines
-                if lines_used >= budget:
-                    break
-            # Reprint in forward order.
-            block_indices.reverse()
-            for i in block_indices:
-                block = self._output_blocks[i]
-                if isinstance(block, ProseBlock):
-                    self._terminal_write(block.ansi_text)
-                elif isinstance(block, TableBlock):
-                    self._terminal_write(render_table(block.data, new_width))
-            # Synchronized output end.
-            self._terminal_write("\x1b[?2026l")
+            try:
+                # Synchronized output start (batch into single frame).
+                self._terminal_write("\x1b[?2026h")
+                # Clear visible screen and home cursor.
+                self._terminal_write("\x1b[2J\x1b[H")
+                # Walk blocks backwards to find the last screenful.
+                block_indices: list[int] = []
+                lines_used = 0
+                for i in range(len(self._output_blocks) - 1, -1, -1):
+                    block = self._output_blocks[i]
+                    if isinstance(block, ProseBlock):
+                        # Approximate physical line count at new width.
+                        block_lines = 0
+                        for line in block.ansi_text.split("\n"):
+                            block_lines += max(1, math.ceil(len(line) / new_width)) if line else 1
+                        # The final empty string from trailing \n should not add a line.
+                        if block.ansi_text.endswith("\n"):
+                            block_lines -= 1
+                        block_lines = max(block_lines, 0)
+                    elif isinstance(block, TableBlock):
+                        rendered = render_table(block.data, new_width)
+                        block_lines = rendered.count("\n")
+                    else:
+                        continue
+                    if lines_used + block_lines > budget and block_indices:
+                        break
+                    block_indices.append(i)
+                    lines_used += block_lines
+                    if lines_used >= budget:
+                        break
+                # Reprint in forward order.
+                block_indices.reverse()
+                for i in block_indices:
+                    block = self._output_blocks[i]
+                    if isinstance(block, ProseBlock):
+                        self._terminal_write(block.ansi_text)
+                    elif isinstance(block, TableBlock):
+                        self._terminal_write(render_table(block.data, new_width))
+                # Synchronized output end.
+                self._terminal_write("\x1b[?2026l")
+            except Exception as exc:
+                self._terminal_write("\x1b[2m[resize error: " + str(exc) + "]\x1b[0m\n")
 
     async def run(
         self,
