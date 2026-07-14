@@ -376,7 +376,7 @@ class Repl:
         # prompt_toolkit's _min_available_height is ~16, causing the
         # managed area (input + howmuchleft) to render at the bottom
         # instead of the top.
-        rows = shutil.get_terminal_size().rows
+        rows = shutil.get_terminal_size().lines
         sys.stdout.write("\n" * max(0, rows - 16))
         sys.stdout.flush()
         async with self._session_factory() as session:
