@@ -408,11 +408,10 @@ class Repl:
             # Wire the on_table callback so tables create TableBlocks (not
             # ProseBlocks) and render through _raw_write.
             ctrl = self._input
-            width = self._width
 
             def _on_table(data: TableData) -> None:
                 ctrl._output_blocks.append(TableBlock(data))
-                rendered = render_table(data, width)
+                rendered = render_table(data, self._width)
                 ctrl._raw_write(rendered)
 
             self._renderer.on_table = _on_table
