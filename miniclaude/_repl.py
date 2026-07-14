@@ -371,6 +371,13 @@ class Repl:
         # history and is no longer visible.
         sys.stdout.write("\x1b[2J\x1b[H")
         sys.stdout.flush()
+        # Push the cursor near the bottom of the terminal so that
+        # prompt_toolkit's _min_available_height is ~16, causing the
+        # managed area (input + howmuchleft) to render at the bottom
+        # instead of the top.
+        rows = shutil.get_terminal_size().rows
+        sys.stdout.write("\n" * max(0, rows - 16))
+        sys.stdout.flush()
         async with self._session_factory() as session:
             self._session = session
             self._input = _PromptController(self)
