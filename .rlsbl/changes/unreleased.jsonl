@@ -14,3 +14,4 @@
 {"id":"18c219da5b59072f058bb709ede644789b8d2db84547438b","commits":["68ea0ad2e896d7343bb22224e7122c9bd1757621"],"user_facing":false}
 {"id":"18c219ea6fa6f95625d8b2c663554130b982e3b472dcdb8d","commits":["7963b9ad49b91218539ab465bd40ceee5e9ee844"],"user_facing":false}
 {"id":"18c219efbeed24de4bf38fd0ac3d4c5888d5af01d70d851a","commits":["f2943b093c39dc355473eb5120e64cde35a55801"],"user_facing":false}
+{"id":"18c21c3d346db8022733f874e4344c3cae1d7acfeba5ec9c","commits":["0cccabf2f5367d34f180fabfb7fe87024da417d4"],"user_facing":true,"description":"**Fix.** Mouse wheel now scrolls the output area instead of cycling input history.","type":"fix"}
