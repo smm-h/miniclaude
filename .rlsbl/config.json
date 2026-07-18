@@ -14,7 +14,7 @@
       "provenance": true
     }
   },
-  "private": false,
+  "publish_mode": "ci",
   "push_timeout": 120,
   "coverage_unit": "commit"
 }
