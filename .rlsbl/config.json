@@ -6,12 +6,14 @@
   "pipelines": {
     "pypi": {
       "type": "pypi",
-      "local": false
+      "local": false,
+      "target": "pypi"
     },
     "npm": {
       "type": "npm",
       "local": false,
-      "provenance": true
+      "provenance": true,
+      "target": "npm"
     }
   },
   "publish_mode": "ci",
