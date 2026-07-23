@@ -16,8 +16,6 @@ import pytest
 
 from claudestream import (
     AssistantText,
-    ContextCategory,
-    ContextUsage,
     PermissionRequest,
     RateLimit,
     Result,
@@ -29,6 +27,13 @@ from claudestream import (
     UserDialogRequest,
 )
 
+from miniclaude._mock import (
+    MockSession as FakeSession,
+    perm_request as _perm,
+    result_event as _result,
+    text_delta as _text_delta,
+    thinking_delta as _thinking_delta,
+)
 from miniclaude._repl import (
     ProseBlock,
     Repl,
@@ -59,64 +64,6 @@ def _plain(text: str) -> str:
 
 
 # --- Fakes -------------------------------------------------------------------
-
-
-class FakeSession:
-    """Records response/control calls; yields scripted event lists per send()."""
-
-    def __init__(self, scripts=None):
-        self._scripts = list(scripts or [])
-        self.sent = []
-        self.calls = []
-        self.interrupt_count = 0
-        self.model_name = "haiku"
-        self.permission_mode = "default"
-        self.total_cost_usd = 0.5
-        self.total_tokens = 1234
-        self.turn_count = 3
-
-    def send(self, prompt, *, raw=False):
-        self.sent.append(prompt)
-        events = self._scripts.pop(0) if self._scripts else []
-
-        async def gen():
-            for event in events:
-                yield event
-
-        return gen()
-
-    async def respond_allow(self, request_id, updated_input, *, updated_permissions=None):
-        self.calls.append(("allow", request_id, updated_input, updated_permissions))
-
-    async def respond_deny(self, request_id, message="Denied by user"):
-        self.calls.append(("deny", request_id, message))
-
-    async def respond_dialog_cancelled(self, request_id):
-        self.calls.append(("cancelled", request_id))
-
-    async def set_model(self, model):
-        self.calls.append(("set_model", model))
-        self.model_name = model
-
-    async def set_permission_mode(self, mode):
-        self.calls.append(("set_mode", mode))
-        self.permission_mode = mode
-
-    async def get_context_usage(self, *, timeout=30.0):
-        self.calls.append(("get_context_usage",))
-        return ContextUsage(
-            total_tokens=100,
-            max_tokens=1000,
-            percentage=10.0,
-            categories=[
-                ContextCategory(name="system", tokens=60),
-                ContextCategory(name="messages", tokens=40),
-            ],
-        )
-
-    async def interrupt(self, *, timeout=30.0):
-        self.interrupt_count += 1
-        return []
 
 
 class FakeInteraction:
@@ -162,45 +109,12 @@ def make_repl(fake, interaction=None, printer=None):
     return repl, printer
 
 
-# --- Event constructors ------------------------------------------------------
-
-
-def _text_delta(text):
-    return StreamDelta(
-        type="stream_event", event={"delta": {"type": "text_delta", "text": text}}
-    )
-
-
-def _thinking_delta(text):
-    return StreamDelta(
-        type="stream_event", event={"delta": {"type": "thinking_delta", "thinking": text}}
-    )
-
-
-def _result(**kw):
-    base = dict(type="result", subtype="success", total_cost_usd=0.0, num_turns=1)
-    base.update(kw)
-    return Result(**base)
-
-
-def _perm(**kw):
-    base = dict(
-        type="control_request",
-        request_id="p1",
-        tool_name="Bash",
-        tool_input={"command": "ls"},
-        permission_suggestions=[],
-    )
-    base.update(kw)
-    return PermissionRequest(**base)
-
-
 # --- Text / thinking rendering ----------------------------------------------
 
 
 @sync
 async def test_text_delta_is_rendered():
-    fake = FakeSession(scripts=[[_text_delta("hello world\n"), _result()]])
+    fake = FakeSession(turns=[[_text_delta("hello world\n"), _result()]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     assert "hello world" in _plain(printer.text)
@@ -208,7 +122,7 @@ async def test_text_delta_is_rendered():
 
 @sync
 async def test_thinking_delta_is_rendered():
-    fake = FakeSession(scripts=[[_thinking_delta("pondering\n"), _result()]])
+    fake = FakeSession(turns=[[_thinking_delta("pondering\n"), _result()]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     assert "pondering" in _plain(printer.text)
@@ -218,7 +132,7 @@ async def test_thinking_delta_is_rendered():
 async def test_assistant_text_flattened_event_is_ignored():
     # AssistantText / Thinking flattened events must NOT be printed (deltas already did).
     fake = FakeSession(
-        scripts=[[AssistantText(type="assistant", text="DOUBLED"),
+        turns=[[AssistantText(type="assistant", text="DOUBLED"),
                   Thinking(type="assistant", text="ALSO_DOUBLED"),
                   _result()]]
     )
@@ -236,7 +150,7 @@ async def test_subagent_stream_delta_is_ignored():
         event={"delta": {"type": "text_delta", "text": "SUBAGENT"}},
         parent_tool_use_id="sub_1",
     )
-    fake = FakeSession(scripts=[[delta, _result()]])
+    fake = FakeSession(turns=[[delta, _result()]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     assert "SUBAGENT" not in _plain(printer.text)
@@ -248,7 +162,7 @@ async def test_subagent_stream_delta_is_ignored():
 @sync
 async def test_tool_use_and_result_lines():
     fake = FakeSession(
-        scripts=[[
+        turns=[[
             ToolUse(type="assistant", tool_use_id="t1", name="Read",
                     input={"file_path": "/a/b.py"}),
             ToolResult(type="user", tool_use_id="t1", content="ok", tool_name="Read"),
@@ -265,7 +179,7 @@ async def test_tool_use_and_result_lines():
 @sync
 async def test_tool_error_result_renders_red_cross():
     fake = FakeSession(
-        scripts=[[
+        turns=[[
             ToolUse(type="assistant", tool_use_id="t1", name="Bash",
                     input={"command": "false"}),
             ToolResult(type="user", tool_use_id="t1", content="command failed",
@@ -297,7 +211,7 @@ async def test_result_line_with_context_pct():
             }
         },
     )
-    fake = FakeSession(scripts=[[result]])
+    fake = FakeSession(turns=[[result]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
@@ -309,7 +223,7 @@ async def test_result_line_with_context_pct():
 
 @sync
 async def test_result_line_without_model_usage_has_no_ctx():
-    fake = FakeSession(scripts=[[_result(total_cost_usd=0.01, duration_ms=1000, num_turns=1)]])
+    fake = FakeSession(turns=[[_result(total_cost_usd=0.01, duration_ms=1000, num_turns=1)]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     assert "ctx" not in _plain(printer.text)
@@ -332,7 +246,7 @@ async def test_system_init_sets_state_without_printing():
         type="system", cwd="/proj", model="haiku",
         permission_mode="default", session_id="sess-1",
     )
-    fake = FakeSession(scripts=[[init, init, _result()]])
+    fake = FakeSession(turns=[[init, init, _result()]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
@@ -353,7 +267,7 @@ async def test_system_init_sets_state_without_printing():
 
 @sync
 async def test_permission_flow_allow_once():
-    fake = FakeSession(scripts=[[_perm()]])
+    fake = FakeSession(turns=[[_perm()]])
     interaction = FakeInteraction(choices=[0])  # Allow once
     repl, _ = make_repl(fake, interaction)
     await repl._run_turn(fake, "hi")
@@ -363,7 +277,7 @@ async def test_permission_flow_allow_once():
 @sync
 async def test_permission_flow_allow_always_passes_suggestion():
     sug = {"rules": [{"toolName": "Bash", "ruleContent": "ls"}]}
-    fake = FakeSession(scripts=[[_perm(permission_suggestions=[sug])]])
+    fake = FakeSession(turns=[[_perm(permission_suggestions=[sug])]])
     interaction = FakeInteraction(choices=[1])  # Allow always
     repl, _ = make_repl(fake, interaction)
     await repl._run_turn(fake, "hi")
@@ -382,7 +296,7 @@ async def test_ask_user_question_flow_injects_answers():
             ]
         },
     )
-    fake = FakeSession(scripts=[[req]])
+    fake = FakeSession(turns=[[req]])
     interaction = FakeInteraction(choices=[0])  # picks Red
     repl, _ = make_repl(fake, interaction)
     await repl._run_turn(fake, "hi")
@@ -397,7 +311,7 @@ async def test_user_dialog_request_is_cancelled():
     req = UserDialogRequest(
         type="control_request", request_id="d1", dialog_kind="mystery_kind"
     )
-    fake = FakeSession(scripts=[[req]])
+    fake = FakeSession(turns=[[req]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     assert fake.calls == [("cancelled", "d1")]
@@ -494,7 +408,7 @@ async def test_plain_line_is_not_handled_as_slash():
 
 @sync
 async def test_queued_lines_sent_one_per_turn_in_order():
-    fake = FakeSession(scripts=[[_result()], [_result()]])
+    fake = FakeSession(turns=[[_result()], [_result()]])
     repl, _ = make_repl(fake)
     await repl._queue.put("a")
     await repl._queue.put("b")
@@ -742,7 +656,7 @@ async def test_no_banner_in_turn_output():
         type="system", cwd="/proj", model="haiku",
         permission_mode="default", session_id="sess-1",
     )
-    fake = FakeSession(scripts=[[init, _result()]])
+    fake = FakeSession(turns=[[init, _result()]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
@@ -764,7 +678,7 @@ async def test_rate_limit_silently_ignored():
         RateLimit(type="system", status="throttled", rate_limit_type="tokens", utilization=0.5),
         _result(),
     ]
-    fake = FakeSession(scripts=[events])
+    fake = FakeSession(turns=[events])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
@@ -778,7 +692,7 @@ async def test_rate_limit_silently_ignored():
 @sync
 async def test_echo_appears_in_output():
     """After _run_turn, the user's input is echoed dimmed."""
-    fake = FakeSession(scripts=[[_result()]])
+    fake = FakeSession(turns=[[_result()]])
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
@@ -806,7 +720,7 @@ async def test_result_updates_hml_state():
             }
         },
     )
-    fake = FakeSession(scripts=[[result]])
+    fake = FakeSession(turns=[[result]])
     fake.total_cost_usd = 0.05
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
