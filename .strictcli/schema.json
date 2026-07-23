@@ -102,6 +102,18 @@
           "negatable": true
         }
       ]
+    },
+    "mock": {
+      "name": "mock",
+      "help": "Interactive REPL against a mock session for TUI testing \u2014 no Claude CLI needed.",
+      "flags": [
+        {
+          "name": "seed",
+          "type": "str",
+          "help": "Random seed (integer) for reproducible content; empty picks a random one",
+          "default": ""
+        }
+      ]
     }
   }
 }

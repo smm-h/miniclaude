@@ -114,5 +114,59 @@ def cmd_repl(
     return None
 
 
+def _resolve_seed(seed: str) -> int:
+    """Resolve a --seed flag to an int. Empty string picks a random seed.
+
+    Raises ValueError when a non-empty seed does not parse as an integer.
+    """
+    if seed:
+        return int(seed)
+    import random
+
+    return random.SystemRandom().randrange(2**31)
+
+
+@app.command(
+    "mock",
+    help="Interactive REPL against a mock session for TUI testing — no Claude CLI needed.",
+)
+@strictcli.flag(
+    "seed",
+    type=str,
+    default="",
+    help="Random seed (integer) for reproducible content; empty picks a random one",
+)
+def cmd_mock(seed: str = "") -> int | None:
+    from miniclaude._dialogs import PromptToolkitInteraction
+    from miniclaude._mock import MockSession
+    from miniclaude._repl import Repl
+
+    try:
+        seed_int = _resolve_seed(seed)
+    except ValueError:
+        print(f"error: --seed must be an integer, got {seed!r}", file=sys.stderr)
+        return 1
+
+    # Print the seed BEFORE the REPL starts so any rendering bug it surfaces is
+    # reproducible via `miniclaude mock --seed <n>`.
+    print(f"mock seed: {seed_int}")
+
+    def _printer(text: str) -> None:
+        if text:
+            sys.stdout.write(text)
+
+    width = shutil.get_terminal_size((80, 24)).columns
+    repl = Repl(
+        session_factory=lambda: MockSession(seed_int),
+        interaction=PromptToolkitInteraction(),
+        printer=_printer,
+        width=width,
+        model="claude-mock",
+        permission_mode="default",
+    )
+    asyncio.run(repl.run())
+    return None
+
+
 def main() -> None:
     app.run()
