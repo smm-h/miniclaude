@@ -238,11 +238,23 @@ wheels = [
 
 [[package]]
 name = "strictcli"
-version = "0.27.0"
+version = "0.32.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fc/c4/3ccc7e7aa2f77c7bc66a3b0d63c3b82c6cb1cf6754138e3de9f390e0514a/strictcli-0.27.0.tar.gz", hash = "sha256:84458e8e768991f0d82e2672a5ee11280e0e37b79ddcce4a764c583cc64228b5", size = 171030, upload-time = "2026-07-11T14:32:47.255Z" }
+dependencies = [
+    { name = "tomlkit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a7/6f/0eb1ac1d526ee70cbf9edbf0ccae5650e2b9741a74cdc4fce91d36d33c74/strictcli-0.32.1.tar.gz", hash = "sha256:10644514f3c780ab601e24d64e2f25d62846948f96c5be2c2d96c97ce44d8759", size = 204878, upload-time = "2026-07-19T21:49:19.678Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/10/7b095a480a4b29570da399b67eb96222e23d449549a3c80af259e220c30f/strictcli-0.27.0-py3-none-any.whl", hash = "sha256:30bf77912391c9479667f2ab501a0b43fc0f42f77078a1a40357e8ab5f3d9a1b", size = 59316, upload-time = "2026-07-11T14:32:46.113Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/1a/7774bfbd522eeeb4dbdc085eeb318642ab33c0dcd178f90f5a8d6bf23ed4/strictcli-0.32.1-py3-none-any.whl", hash = "sha256:52419fc3c14da827b31f5badd00d639fb1d1c7486efc1b10231200fe2b0b0391", size = 75782, upload-time = "2026-07-19T21:49:18.289Z" },
+]
+
+[[package]]
+name = "tomlkit"
+version = "0.15.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/96/e07752635b98536177fa1f37671c8f3cdde2e724c6bcf6034b2cfb571565/tomlkit-0.15.1.tar.gz", hash = "sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97", size = 180129, upload-time = "2026-07-17T01:48:04.562Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/bc/8c13eb66537dce1d2bd3a57132902f38d0e7f5bb46fa9f4daed9fe9d76ee/tomlkit-0.15.1-py3-none-any.whl", hash = "sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304", size = 49449, upload-time = "2026-07-17T01:48:05.728Z" },
 ]
 
 [[package]]

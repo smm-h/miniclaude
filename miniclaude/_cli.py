@@ -7,6 +7,7 @@ import shutil
 import sys
 
 import strictcli
+from strictcli import Context
 
 from miniclaude import __version__
 
@@ -33,7 +34,7 @@ app = strictcli.App(
 
 
 @app.command("version", help="Print the miniclaude version")
-def cmd_version() -> None:
+def cmd_version(ctx: Context) -> None:
     print(__version__)
 
 
@@ -58,6 +59,7 @@ def cmd_version() -> None:
     help="Continue the most recent session",
 )
 def cmd_repl(
+    ctx: Context,
     profile: str,
     model: str,
     permission_mode: str,
@@ -136,7 +138,7 @@ def _resolve_seed(seed: str) -> int:
     default="",
     help="Random seed (integer) for reproducible content; empty picks a random one",
 )
-def cmd_mock(seed: str = "") -> int | None:
+def cmd_mock(ctx: Context, seed: str = "") -> int | None:
     from miniclaude._dialogs import PromptToolkitInteraction
     from miniclaude._mock import MockSession
     from miniclaude._repl import Repl
