@@ -38,3 +38,4 @@
 {"id":"18c53bc257e74d1b9640605ce52c460b92d4594641799ef0","commits":["aca5f4f314ffadb4f92e091b1c9ae655617f5970"],"user_facing":false}
 {"id":"18c53bdc7e8392a6a43b1878a02d4f5682625217cc1631a8","commits":["e2ab7505270baf4e0f19467ed471df021c4dd254"],"user_facing":false}
 {"id":"18c53c0dc3b59af68848e53222ac40d79816656d537bdcc6","commits":["d0906713d7ab0dca74eb6bf01284fb73c146df20"],"user_facing":true,"description":"**Status bar rate limits.** Rate-limit events from the CLI now populate the status bar's limit rows, which previously always showed placeholders.","type":"fix"}
+{"id":"18c53c3e08674cfcb97cc5c9416e41bdb7f682a8d62212a8","commits":["74b596860bac55ae3c4b9986e4e4c13cf60704c3"],"user_facing":true,"description":"**Mock mode status bar.** Mock sessions now emit deterministic seed-derived rate-limit data, so the status bar renders fully populated.","type":"feature"}
