@@ -26,6 +26,10 @@ from tests._pty_harness import PtySession
 
 pytestmark = pytest.mark.integration
 
+# Profile driven by the live turn. Also read by conftest's skip gate
+# (getattr(module, "PROFILE", ...)) to resolve prerequisites for the same profile.
+PROFILE = "work"
+
 _STARTUP_TIMEOUT = 30.0
 _TURN_TIMEOUT = 120.0
 _QUIT_TIMEOUT = 20.0
@@ -35,7 +39,7 @@ _QUIT_TIMEOUT = 20.0
 def test_repl_pty_smoke():
     argv = [
         "uv", "run", "miniclaude", "repl",
-        "--profile", "personal",
+        "--profile", PROFILE,
         "--model", "haiku",
         "--permission-mode", "default",
     ]
