@@ -18,7 +18,7 @@
 {"id":"18c229f067a44dde97986c4670744f1f826d847c47da3d10","commits":["77ed934cd47d8679ea278f081730f31c09c62831"],"user_facing":false}
 {"id":"18c22a172561d5d7b3e0b2fc51c54ec38ee2c3d1a866a170","commits":["45f41d455382f1e0f5ac3eb7691b1cc2684c2682"],"user_facing":false}
 {"id":"18c22a1e1661b3f7ff3af8b11ad94c25b69b6cc2d278b99a","commits":["5156401eddd841b0a702b8684e6c0ac7ff89c6bc"],"user_facing":false}
-{"id":"18c22a9b4342944a2294c9e7d1dc409f9c3ab958894622e7","commits":["4bd894b2c8d2ebb0eccde444001d526d5d258de2"],"user_facing":true,"description":"**Breaking.** Switched to inline mode with native terminal scroll. Output flows through `patch_stdout` into terminal scrollback instead of a fullscreen alternate-screen Application.","type":"breaking"}
+{"id":"18c22a9b4342944a2294c9e7d1dc409f9c3ab958894622e7","commits":["4bd894b2c8d2ebb0eccde444001d526d5d258de2"],"user_facing":false}
 {"id":"18c22bc7cbc68e72b7fb2358fee646d8977fe7a0f074422e","commits":["fdf28afce3afce43f72f378aec181eb66e75cd32"],"user_facing":true,"description":"**New feature.** Tables render with box-drawing borders, cell wrapping (word-boundary breaking, ANSI state preservation), and a constraint-based column width solver that prioritizes header readability.","type":"feature"}
 {"id":"18c22bce7b075411a5bb1b91c73d466e8d8498df2a0f59d1","commits":["f6a69a527ce95932220a3397e580769f428d0432"],"user_facing":false}
 {"id":"18c22c602a037f3e5179bfcfccd744999d9a28c42458188e","commits":["0378d8069a1551599f134ace59dbc74479126c79"],"user_facing":true,"description":"Tables re-render on terminal resize","type":"feature"}
