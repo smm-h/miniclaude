@@ -102,12 +102,17 @@ async def test_table_dimensions_within_bounds():
 
 
 @sync
-async def test_wide_contains_non_ascii():
-    events = await _drive(MockSession(3), "wide")
+@pytest.mark.parametrize(
+    "prompt",
+    ["table", "text", "thinking", "tools", "status", "help", "demo", "bogus"],
+)
+async def test_mock_generated_content_is_ascii(prompt):
+    """Mock-generated content is ASCII-only: emoji/CJK render at unpredictable
+    widths in real terminals and would break table alignment. (Only text the
+    mock fabricates is checked; user-supplied `md` payloads are exempt.)"""
+    events = await _drive(MockSession(3), prompt)
     text = _concat_text(events)
-    assert not text.isascii()
-    cols, rows = _parse_table(text)
-    assert 5 <= cols <= 10 and 5 <= rows <= 10
+    assert text.isascii(), f"non-ASCII in {prompt!r} content: {text!r}"
 
 
 # --- Rate-limit emission -----------------------------------------------------
@@ -198,7 +203,7 @@ async def test_unknown_command_lists_commands():
 
 @pytest.mark.parametrize(
     "prompt",
-    ["table", "wide", "text", "thinking", "tools", "status", "md hello", "help", "dialogs", "bogus"],
+    ["table", "text", "thinking", "tools", "status", "md hello", "help", "dialogs", "bogus"],
 )
 @sync
 async def test_each_command_ends_with_one_result(prompt):

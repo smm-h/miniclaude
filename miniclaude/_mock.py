@@ -92,17 +92,9 @@ _LOREM = [
     "cupidatat", "proident", "culpa", "officia", "deserunt", "mollit", "animus",
 ]
 
-# Display-width stress samples: emoji (wide), CJK (wide), and combining sequences.
-_WIDE_SAMPLES = [
-    "😀", "🚀", "🎉", "🧪", "🌍",
-    "日本語", "中文字", "한국어", "繁體",
-    "é", "ä", "ñ", "ôü",
-]
-
 # The mock command catalogue, listed by `help` and on unknown input.
 _MOCK_COMMANDS = [
     ("table", "markdown table with random dimensions and cell contents"),
-    ("wide", "table salted with emoji/CJK/combining chars (width stress test)"),
     ("text", "multi-paragraph markdown: headers, lists, code, bold, inline code"),
     ("thinking", "a few thinking deltas followed by a short answer"),
     ("tools", "tool use/result pairs incl. an error and a subagent case"),
@@ -252,9 +244,7 @@ class MockSession:
     def _dispatch(self, cmd: str, arg: str):
         """Map a mock command word to its event generator (case-sensitive)."""
         if cmd == "table":
-            return self._gen_table(salt=False)
-        if cmd == "wide":
-            return self._gen_table(salt=True)
+            return self._gen_table()
         if cmd == "text":
             return self._gen_text()
         if cmd == "thinking":
@@ -379,15 +369,8 @@ class MockSession:
         n = self._rng.randint(4, 12)
         return " ".join(self._word() for _ in range(n))
 
-    def _salt(self, cell: str) -> str:
-        """Prepend or append a display-width stress sample to a cell."""
-        extra = self._rng.choice(_WIDE_SAMPLES)
-        if self._rng.random() < 0.5:
-            return f"{extra} {cell}"
-        return f"{cell} {extra}"
-
-    def _make_table(self, salt: bool) -> str:
-        """Build a markdown table: 5-10 columns by 5-10 rows."""
+    def _make_table(self) -> str:
+        """Build a markdown table: 5-10 columns by 5-10 rows (ASCII cells)."""
         cols = self._rng.randint(5, 10)
         rows = self._rng.randint(5, 10)
         header = [self._word() for _ in range(cols)]
@@ -396,10 +379,7 @@ class MockSession:
             "| " + " | ".join("---" for _ in range(cols)) + " |",
         ]
         for _ in range(rows):
-            row = []
-            for _ in range(cols):
-                cell = self._cell()
-                row.append(self._salt(cell) if salt else cell)
+            row = [self._cell() for _ in range(cols)]
             lines.append("| " + " | ".join(row) + " |")
         return "\n".join(lines) + "\n"
 
@@ -414,7 +394,7 @@ class MockSession:
         )
 
     def _command_list_md(self) -> str:
-        body = "".join(f"- `{name}` — {desc}\n" for name, desc in _MOCK_COMMANDS)
+        body = "".join(f"- `{name}` -- {desc}\n" for name, desc in _MOCK_COMMANDS)
         return "## Mock commands\n\n" + body
 
     def _ack_text(self, resp: tuple) -> str:
@@ -424,15 +404,15 @@ class MockSession:
             updated = resp[2] if len(resp) > 2 else {}
             if isinstance(updated, dict) and "answers" in updated:
                 return f"You answered: {updated['answers']}\n"
-            return "Approved — running the command.\n"
+            return "Approved -- running the command.\n"
         if kind == "deny":
             return f"Denied: {resp[2] if len(resp) > 2 else ''}\n"
         return "Dialog cancelled.\n"
 
     # --- Per-command generators ---
 
-    async def _gen_table(self, salt: bool):
-        async for event in self._stream_text(self._make_table(salt=salt)):
+    async def _gen_table(self):
+        async for event in self._stream_text(self._make_table()):
             yield event
 
     async def _gen_text(self):
@@ -444,7 +424,7 @@ class MockSession:
             n = self._rng.randint(6, 12)
             yield thinking_delta(" ".join(self._word() for _ in range(n)) + "\n")
             await asyncio.sleep(0.01)
-        async for event in self._stream_text("Done thinking — here is a short answer.\n"):
+        async for event in self._stream_text("Done thinking -- here is a short answer.\n"):
             yield event
 
     async def _gen_tools(self):
@@ -567,8 +547,7 @@ class MockSession:
         sections = [
             ("Text", self._gen_text()),
             ("Thinking", self._gen_thinking()),
-            ("Table", self._gen_table(salt=False)),
-            ("Wide", self._gen_table(salt=True)),
+            ("Table", self._gen_table()),
             ("Tools", self._gen_tools()),
             ("Status", self._gen_status()),
         ]
