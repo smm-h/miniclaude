@@ -42,3 +42,4 @@
 {"id":"18c53db1a4c7e2917a7939f6c3244230996166fad59576cb","commits":["01760905aa4cfd352f8de95d5a56a7359f018ea7"],"user_facing":true,"description":"**Fullscreen TUI.** The REPL now runs as a fullscreen application (alternate screen): output scrolls in-app with mouse wheel, input is anchored to the bottom, and terminal-native scrollback is no longer used.","type":"breaking"}
 {"id":"18c53db2abf200a1c55f32d192be44999d5675da46e0610d","commits":["5b2889feb954561e849aeb5f2c982faf0c40743a"],"user_facing":true,"description":"**Slow, controllable scrolling.** Mouse-wheel scrolling now moves one line per ten wheel events with scroll-lock (auto-follow pauses while scrolled up, resumes at bottom).","type":"feature"}
 {"id":"18c53e7172d3afc2a575c9bb65b9444ba300a062dc07a7ec","commits":["3dc3b201c0e90a5c152f458d236eee7a739d0f7e"],"user_facing":false}
+{"id":"18c53ea77a0d485a2b91380e21314d3ba6cf954d85108d3b","commits":["a7cf0fa68799bb30424c4fb8b905c9d778368775"],"user_facing":false}
