@@ -26,6 +26,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "pyte>=0.8.2",
     "pytest",
     "pytest-timeout",
 ]
