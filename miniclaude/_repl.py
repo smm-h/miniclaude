@@ -519,6 +519,23 @@ class Repl:
             return
 
         if isinstance(event, RateLimit):
+            # Accumulate rate-limit state for the howmuchleft status bar; no
+            # visible output (howmuchleft renders the limit rows itself).
+            #
+            # Mapping grounded on fixture evidence, not live traffic: a live
+            # probe (2026-07-24) observed ZERO RateLimit events (the account was
+            # not near any threshold). The keys/values come from claudestream's
+            # own test fixture (rate_limit_type "five_hour") and howmuchleft's
+            # stdin schema (a rate_limits dict keyed five_hour/seven_day/
+            # seven_day_overage_included, each {used_percentage, resets_at}).
+            # The discriminator is passed through verbatim: whatever
+            # rate_limit_type arrives becomes the key, later events overwrite.
+            if self._rate_limits is None:
+                self._rate_limits = {}
+            entry: dict[str, Any] = {"used_percentage": event.utilization * 100}
+            if event.resets_at is not None:
+                entry["resets_at"] = event.resets_at
+            self._rate_limits[event.rate_limit_type] = entry
             return
 
         if isinstance(event, BudgetThreshold):

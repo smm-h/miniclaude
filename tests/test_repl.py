@@ -671,7 +671,7 @@ async def test_no_banner_in_turn_output():
 
 @sync
 async def test_rate_limit_silently_ignored():
-    """All RateLimit events are silently ignored (howmuchleft handles display)."""
+    """RateLimit events produce no visible output but do populate _rate_limits."""
     events = [
         RateLimit(type="system", status="allowed", rate_limit_type="tokens", utilization=0.0),
         RateLimit(type="system", status="allowed", rate_limit_type="tokens", utilization=0.9),
@@ -684,6 +684,53 @@ async def test_rate_limit_silently_ignored():
     plain = _plain(printer.text)
     assert "rate limit" not in plain
     assert "throttled" not in plain
+    # No visible output, but the state is captured for the status bar. The last
+    # event for a given key wins (utilization 0.5 -> 50.0%).
+    assert repl._rate_limits is not None
+    assert repl._rate_limits["tokens"]["used_percentage"] == 50.0
+
+
+def test_rate_limits_fed_to_howmuchleft(monkeypatch):
+    """RateLimit events accumulate into _rate_limits and reach howmuchleft stdin."""
+    import json
+    import subprocess
+
+    captured: dict = {}
+
+    def fake_run(cmd, *, input, capture_output, text, timeout):
+        captured["json"] = json.loads(input)
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = "a\nb\nc\n"
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/howmuchleft")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ts_5h = 1900000000
+    ts_7d = 1900500000
+    events = [
+        RateLimit(
+            type="system", status="allowed", rate_limit_type="five_hour",
+            utilization=0.42, resets_at=ts_5h,
+        ),
+        RateLimit(
+            type="system", status="allowed", rate_limit_type="seven_day",
+            utilization=0.13, resets_at=ts_7d,
+        ),
+        _result(),
+    ]
+    fake = FakeSession(turns=[events])
+    repl, _printer = make_repl(fake)
+
+    asyncio.run(repl._run_turn(fake, "hi"))
+    # The toolbar feed (the production status bar's data source) forwards the
+    # accumulated rate limits into howmuchleft's stdin JSON.
+    repl._get_toolbar()
+    assert captured["json"]["rate_limits"] == {
+        "five_hour": {"used_percentage": 42.0, "resets_at": ts_5h},
+        "seven_day": {"used_percentage": 13.0, "resets_at": ts_7d},
+    }
 
 
 # --- Echo line ----------------------------------------------------------------
