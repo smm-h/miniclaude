@@ -284,8 +284,9 @@ def test_table_basic_alignment() -> None:
     assert plain == (
         "┌───────┬─────┐\n"
         "│ Name  │ Age │\n"
-        "├───────┼─────┤\n"
+        "╞═══════╪═════╡\n"
         "│ Alice │ 30  │\n"
+        "├───────┼─────┤\n"
         "│ Bob   │ 5   │\n"
         "└───────┴─────┘\n"
     )
@@ -299,7 +300,7 @@ def test_table_column_alignment_colons() -> None:
     assert plain == (
         "┌──────┬────────┬───────┐\n"
         "│ Left │ Center │ Right │\n"
-        "├──────┼────────┼───────┤\n"
+        "╞══════╪════════╪═══════╡\n"
         "│ a    │   bb   │   ccc │\n"
         "└──────┴────────┴───────┘\n"
     )
@@ -322,7 +323,7 @@ def test_table_terminated_by_finish() -> None:
     assert plain == (
         "┌───┬───┐\n"
         "│ A │ B │\n"
-        "├───┼───┤\n"
+        "╞═══╪═══╡\n"
         "│ 1 │ 2 │\n"
         "└───┴───┘\n"
     )
@@ -335,7 +336,7 @@ def test_table_inline_styles_in_cells() -> None:
     assert plain == (
         "┌─────────┬──────┐\n"
         "│ Feature │ Note │\n"
-        "├─────────┼──────┤\n"
+        "╞═════════╪══════╡\n"
         "│ fast    │ x    │\n"
         "└─────────┴──────┘\n"
     )
@@ -355,7 +356,7 @@ def test_table_wraps_widest_cells_to_fit_width() -> None:
         "┌─────────┬────────┐\n"
         "│ Column  │ Column │\n"
         "│ One     │ Two    │\n"
-        "├─────────┼────────┤\n"
+        "╞═════════╪════════╡\n"
         "│ aaaa    │ bbbb   │\n"
         "└─────────┴────────┘\n"
     )
@@ -438,7 +439,7 @@ def test_table_emoji_alignment() -> None:
         "┌───┬─────┬────┐\n"
         "│ … │ hel │ \U0001f98b │\n"
         "│   │ lo  │ \U0001f33b │\n"
-        "├───┼─────┼────┤\n"
+        "╞═══╪═════╪════╡\n"
         "│ a │ wor │ x  │\n"
         "│   │ ld  │    │\n"
         "└───┴─────┴────┘\n"
@@ -499,7 +500,7 @@ def test_table_mixed_content() -> None:
         "│ o │ usi │\n"
         "│ l │ c   │\n"
         "│ d │     │\n"
-        "├───┼─────┤\n"
+        "╞═══╪═════╡\n"
         "│ n │ dat │\n"
         "│ o │ a   │\n"
         "│ r │     │\n"
@@ -553,7 +554,7 @@ def test_table_cell_wrapping_multiline() -> None:
     assert plain == (
         "┌───────┬────────────────────┐\n"
         "│ Name  │ Description        │\n"
-        "├───────┼────────────────────┤\n"
+        "╞═══════╪════════════════════╡\n"
         "│ Alice │ A very long        │\n"
         "│       │ description that   │\n"
         "│       │ wraps              │\n"
@@ -572,7 +573,7 @@ def test_table_wrap_word_boundary() -> None:
     assert plain == (
         "┌─────────────┐\n"
         "│ Header      │\n"
-        "├─────────────┤\n"
+        "╞═════════════╡\n"
         "│ hello world │\n"
         "│ foo bar     │\n"
         "└─────────────┘\n"
@@ -595,7 +596,7 @@ def test_table_wrap_ansi_preservation() -> None:
     assert plain == (
         "┌─────────────┐\n"
         "│ H           │\n"
-        "├─────────────┤\n"
+        "╞═════════════╡\n"
         "│ bold wraps  │\n"
         "│ here        │\n"
         "└─────────────┘\n"
@@ -620,7 +621,7 @@ def test_table_wrap_wide_char_padding() -> None:
     assert plain == (
         "┌─────┬──────┐\n"
         "│ A   │ B    │\n"
-        "├─────┼──────┤\n"
+        "╞═════╪══════╡\n"
         "│ x\U0001f3b8 │ shor │\n"
         "│ y   │ t    │\n"
         "└─────┴──────┘\n"
@@ -639,7 +640,7 @@ def test_table_header_priority_sizing() -> None:
     assert plain == (
         "┌────────┬───────────────────┐\n"
         "│ Rating │ Description       │\n"
-        "├────────┼───────────────────┤\n"
+        "╞════════╪═══════════════════╡\n"
         "│ 5      │ Excellent service │\n"
         "│        │ and amazing food  │\n"
         "└────────┴───────────────────┘\n"
@@ -663,7 +664,7 @@ def test_table_extreme_narrow() -> None:
         "┌──────┬─────┬─────┐\n"
         "│ Alph │ Bet │ Gam │\n"
         "│ a    │ a   │ ma  │\n"
-        "├──────┼─────┼─────┤\n"
+        "╞══════╪═════╪═════╡\n"
         "│ one  │ thr │ fiv │\n"
         "│ two  │ ee  │ e   │\n"
         "│      │ fou │ six │\n"
@@ -692,7 +693,8 @@ def test_table_render_at_different_widths() -> None:
     for p in (plain80, plain30):
         assert "┌" in p and "┘" in p
         assert "│" in p
-        assert "├" in p and "┤" in p
+        # Header/body rule is now the heavy double rule.
+        assert "╞" in p and "╡" in p
     # They produce different output (wrapping differs).
     assert plain80 != plain30
     # At width 80, everything fits on one line (no wrapping).
@@ -704,3 +706,82 @@ def test_table_render_at_different_widths() -> None:
                if l.startswith("│") and "Name" not in l and "Description" not in l
                and "─" not in l]
     assert len(body_30) == 2
+
+
+# -- row separators (heavy header rule + light between-row rules) --------------
+
+
+def test_table_three_body_rows_light_separators() -> None:
+    """A 3-row plain table: heavy rule under the header, light rules between
+    every pair of adjacent logical body rows."""
+    data = TableData(
+        header_rows=[["Name", "Age"]],
+        body_rows=[["Alice", "30"], ["Bob", "5"], ["Carol", "25"]],
+        aligns=["left", "left"],
+    )
+    plain = _strip_ansi(render_table(data, 80))
+    assert plain == (
+        "┌───────┬─────┐\n"
+        "│ Name  │ Age │\n"
+        "╞═══════╪═════╡\n"
+        "│ Alice │ 30  │\n"
+        "├───────┼─────┤\n"
+        "│ Bob   │ 5   │\n"
+        "├───────┼─────┤\n"
+        "│ Carol │ 25  │\n"
+        "└───────┴─────┘\n"
+    )
+
+
+def test_table_multirow_wrapping_separator_at_logical_boundaries() -> None:
+    """Multi-row table where each body cell wraps to several sub-lines.  A light
+    rule appears only at the boundary BETWEEN logical rows, never between the
+    wrapped sub-lines of a single logical row."""
+    data = TableData(
+        header_rows=[["Name", "Description"]],
+        body_rows=[
+            ["Alice", "A very long description that wraps"],
+            ["Bob", "Another long description here"],
+        ],
+        aligns=["left", "left"],
+    )
+    plain = _strip_ansi(render_table(data, 30))
+    assert plain == (
+        "┌───────┬────────────────────┐\n"
+        "│ Name  │ Description        │\n"
+        "╞═══════╪════════════════════╡\n"
+        "│ Alice │ A very long        │\n"
+        "│       │ description that   │\n"
+        "│       │ wraps              │\n"
+        "├───────┼────────────────────┤\n"
+        "│ Bob   │ Another long       │\n"
+        "│       │ description here   │\n"
+        "└───────┴────────────────────┘\n"
+    )
+    # Exactly one light separator (between the two logical rows), not one per
+    # wrapped sub-line.
+    assert plain.count("├") == 1
+
+
+def test_table_multirow_wide_char_separator_alignment() -> None:
+    """Multi-row table with emoji/wide chars: the light between-row separator
+    aligns to the same visible width as every other row."""
+    data = TableData(
+        header_rows=[["Item", "Qty"]],
+        body_rows=[["\U0001f3b8gtr", "2"], ["\U0001f98b\U0001f33bwx", "10"]],
+        aligns=["left", "left"],
+    )
+    plain = _strip_ansi(render_table(data, 20))
+    assert plain == (
+        "┌────────┬─────┐\n"
+        "│ Item   │ Qty │\n"
+        "╞════════╪═════╡\n"
+        "│ \U0001f3b8gtr  │ 2   │\n"
+        "├────────┼─────┤\n"
+        "│ \U0001f98b\U0001f33bwx │ 10  │\n"
+        "└────────┴─────┘\n"
+    )
+    # Every row (borders, header, heavy rule, body, light rule) is the same
+    # visible width.
+    widths = {_visible_len(line) for line in plain.splitlines()}
+    assert len(widths) == 1, f"misaligned widths: {widths}"

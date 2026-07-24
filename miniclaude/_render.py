@@ -434,8 +434,13 @@ def _render_bottom_border(col_w: list[int]) -> str:
 
 
 def _render_separator(col_w: list[int]) -> str:
-    """Render header-body separator: ``├───┼───┤``."""
+    """Render light between-row separator: ``├───┼───┤``."""
     return "├" + "┼".join("─" * (w + 2) for w in col_w) + "┤\n"
+
+
+def _render_header_separator(col_w: list[int]) -> str:
+    """Render heavy header/body separator: ``╞═══╪═══╡``."""
+    return "╞" + "╪".join("═" * (w + 2) for w in col_w) + "╡\n"
 
 
 def _render_wrapped_row(
@@ -539,8 +544,12 @@ def render_table(data: TableData, width: int) -> str:
     for cells in header_grid:
         lines.append(_render_wrapped_row(cells, col_w, aligns))
     if header_grid:
-        lines.append(_render_separator(col_w))
-    for cells in body_grid:
+        lines.append(_render_header_separator(col_w))
+    for i, cells in enumerate(body_grid):
+        if i > 0:
+            # Light rule between adjacent logical body rows (never between the
+            # wrapped sub-lines of a single logical row).
+            lines.append(_render_separator(col_w))
         lines.append(_render_wrapped_row(cells, col_w, aligns))
     lines.append(_render_bottom_border(col_w))
     return "".join(lines)
