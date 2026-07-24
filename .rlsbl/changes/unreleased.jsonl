@@ -49,3 +49,4 @@
 {"id":"18c545dc6429d9f0e8a6e2395c9a40b4845174abd0e1ce6d","commits":["2c1dd3095fabe2ddfa00a2d06d65bbca0d0c856d"],"user_facing":true,"description":"**Mock tables align in all terminals.** Mock-generated content is now ASCII-only; the `wide` command is removed since emoji/CJK render at unpredictable widths in real terminals.","type":"fix"}
 {"id":"18c5473f0ed6b175a39f5fd5b1424a8a89526c4b1a68883c","commits":["051059d83d5c1429bd68bec45e59695e19771605"],"user_facing":false}
 {"id":"18c54891aaffc3499243897497e7415bba12e6d71f5a84e7","commits":["5a8b85cc0aa85f35115c646aea5d742af24a385e"],"user_facing":true,"description":"**Errors are visible.** Hard turn failures (e.g. auth/account rejections) now render their explanation and mark the result line as an error, instead of showing a bare zero-cost result.","type":"fix"}
+{"id":"18c548952373ae7d55a33bdc790d4f66ad0348ccdaf895f1","commits":["7c7b2a3b48f79ced4550fe9ee01b6d8b37f9bfa5"],"user_facing":false}
