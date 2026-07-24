@@ -35,3 +35,4 @@
 {"id":"18c4fbfd3c8a13fe8a7916097ecd45a1b575d4da9792b0dd","commits":["f69c9b3fc5ca9625c186e2ff86c63eac3d2d64ea"],"user_facing":true,"description":"**Fix startup crash with strictcli >= 0.29.** `miniclaude` failed at import (\"handler missing parameter\") under the new strictcli handler contract; command handlers now accept the injected context argument.","type":"fix"}
 {"id":"18c53ba844442b2031f676b255fa470f89c8f18a83be5d5a","commits":["a58ac1e137b1b847e0654069020768018206be81"],"user_facing":true,"description":"**Table separators.** Rendered tables now draw a heavy rule under the header and light rules between every body row.","type":"feature"}
 {"id":"18c53bb4303ab3c1f20ff6a4f5d8458896fc99521c5071ec","commits":["e122abe9f76f483239ee2d20216a4c9280f6760f"],"user_facing":false}
+{"id":"18c53bc257e74d1b9640605ce52c460b92d4594641799ef0","commits":["aca5f4f314ffadb4f92e091b1c9ae655617f5970"],"user_facing":false}
