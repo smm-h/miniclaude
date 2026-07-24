@@ -663,6 +663,14 @@ _SCROLL_DIVISOR = 10
 # burst and moves one line immediately.
 _SCROLL_BURST_GAP = 0.3
 
+# How long a scroll-boundary flash hint (top-of-history / end-of-output rule)
+# stays visible after a wheel event is blocked at the corresponding edge.
+_HINT_DURATION = 0.4
+
+# Style for the boundary flash rule: reverse-video yellow, clearly distinct from
+# the box-drawing rules tables use.
+_HINT_STYLE = "reverse fg:ansiyellow"
+
 
 def _render_info_at_bottom(info: Any) -> bool:
     """True when the last content line is visible (the view is at the bottom).
@@ -729,6 +737,10 @@ class _PromptController:
         # detection. Injectable so tests can drive burst gaps deterministically.
         self._clock: Callable[[], float] = time.monotonic
         self._last_scroll_time: float = 0.0
+        # Scroll-boundary flash hints: monotonic deadlines until which the
+        # top-of-history / end-of-output rule stays visible (0 == inactive).
+        self._top_hint_deadline: float = 0.0
+        self._bottom_hint_deadline: float = 0.0
         # Number of logical lines in the output snapshot the control is currently
         # SERVING (set by _serve_output). The cursor position derives from this
         # exact snapshot -- never a fresh re-materialization at a possibly-changed
@@ -884,6 +896,40 @@ class _PromptController:
         self._last_scroll_dir = ""
         self._last_scroll_time = 0.0
 
+    # -- Scroll-boundary flash hints -------------------------------------------
+
+    def _flash_top_boundary(self) -> None:
+        """Flash the top-of-history hint (wheel-up blocked at the very top)."""
+        self._top_hint_deadline = self._clock() + _HINT_DURATION
+        self._schedule_hint_refresh()
+
+    def _flash_bottom_boundary(self) -> None:
+        """Flash the end-of-output hint (wheel-down blocked at the bottom)."""
+        self._bottom_hint_deadline = self._clock() + _HINT_DURATION
+        self._schedule_hint_refresh()
+
+    def _top_hint_active(self, now: float | None = None) -> bool:
+        now = self._clock() if now is None else now
+        return now < self._top_hint_deadline
+
+    def _bottom_hint_active(self, now: float | None = None) -> bool:
+        now = self._clock() if now is None else now
+        return now < self._bottom_hint_deadline
+
+    def _schedule_hint_refresh(self) -> None:
+        """Redraw now to show the hint, and again after it expires to clear it.
+
+        The expiry redraw does not rely on a turn being active: it is scheduled
+        on the event loop directly. (The app's refresh_interval would also cover
+        it, but scheduling makes the disappearance deterministic.)
+        """
+        self._repl._invalidate()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.call_later(_HINT_DURATION + 0.02, self._repl._invalidate)
+
     def _build_app(self):
         from pathlib import Path
 
@@ -894,9 +940,13 @@ class _PromptController:
         from prompt_toolkit.formatted_text import ANSI
         from prompt_toolkit.history import FileHistory, ThreadedHistory
         from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.filters import Condition
         from prompt_toolkit.layout import (
             BufferControl,
+            ConditionalContainer,
             Dimension,
+            Float,
+            FloatContainer,
             FormattedTextControl,
             HSplit,
             Layout,
@@ -945,16 +995,54 @@ class _PromptController:
         _orig_scroll_down = output_window._scroll_down
 
         def _wheel_up() -> None:
+            # A wheel-up while already pinned to the very top is blocked: flash
+            # the top-of-history hint. vertical_scroll==0 means nothing above.
+            at_top = output_window.vertical_scroll <= 0
             self._on_scroll_up(_orig_scroll_up)
+            if at_top and output_window.vertical_scroll <= 0:
+                self._flash_top_boundary()
 
         def _wheel_down() -> None:
+            at_bottom = _render_info_at_bottom(output_window.render_info)
             self._on_scroll_down(
                 _orig_scroll_down,
                 lambda: _render_info_at_bottom(output_window.render_info),
             )
+            # A wheel-down while already at the end of the output is blocked:
+            # flash the end-of-output hint.
+            if at_bottom and _render_info_at_bottom(output_window.render_info):
+                self._flash_bottom_boundary()
 
         output_window._scroll_up = _wheel_up
         output_window._scroll_down = _wheel_down
+
+        # --- Scroll-boundary flash hints (overlay the output edges) ---
+        # Full-width reverse-video rules floated at the top and bottom edges of
+        # the output area. Conditional filters keep them out of the layout except
+        # during their brief flash, so they never shift the box borders.
+        def _hint_line():
+            width = max(1, self._current_width())
+            return [(_HINT_STYLE, "─" * width)]
+
+        top_hint = ConditionalContainer(
+            content=Window(
+                content=FormattedTextControl(text=_hint_line), height=1
+            ),
+            filter=Condition(self._top_hint_active),
+        )
+        bottom_hint = ConditionalContainer(
+            content=Window(
+                content=FormattedTextControl(text=_hint_line), height=1
+            ),
+            filter=Condition(self._bottom_hint_active),
+        )
+        output_area = FloatContainer(
+            content=output_window,
+            floats=[
+                Float(content=top_hint, top=0, left=0, right=0, height=1),
+                Float(content=bottom_hint, bottom=0, left=0, right=0, height=1),
+            ],
+        )
 
         # --- Input region (boxed, bottom) ---
         def _accept(buf: Buffer) -> bool:
@@ -1022,7 +1110,7 @@ class _PromptController:
                 event.app.exit()
 
         # --- Layout ---
-        root = HSplit([output_window, framed_input, hml_window])
+        root = HSplit([output_area, framed_input, hml_window])
         layout = Layout(root, focused_element=input_buffer)
 
         app: Application = Application(

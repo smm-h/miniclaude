@@ -222,3 +222,55 @@ def test_resize_re_renders_table_at_new_width():
         )
 
         assert pty.quit(_QUIT_TIMEOUT)
+
+
+def _wheel_up(pty: PtySession, *, col: int = 5, row: int = 3, n: int = 1) -> None:
+    """Send ``n`` SGR wheel-up mouse events aimed at the output window."""
+    seq = f"\x1b[<64;{col};{row}M".encode()
+    for _ in range(n):
+        pty.send(seq)
+
+
+def _is_rule_row(line: str, cols: int) -> bool:
+    """True when ``line`` is a full-width horizontal rule (the flash hint)."""
+    stripped = line.rstrip()
+    return len(stripped) >= cols - 2 and set(stripped) == {"─"}
+
+
+@pytest.mark.timeout(120)
+def test_scroll_up_at_top_flashes_and_clears_boundary_hint():
+    """A wheel-up burst while pinned at the top of history flashes a full-width
+    horizontal rule at the top edge, which then disappears after its duration."""
+    rows, cols = 40, 120
+    with PtySession(_argv(), rows=rows, cols=cols) as pty:
+        assert pty.read_until("┌", _STARTUP_TIMEOUT)
+        assert pty.read_until("mock seed:", _STARTUP_TIMEOUT)
+        _settle(pty, 0.5)
+
+        # No rule row before scrolling (output is just the intro line).
+        assert not any(_is_rule_row(line, cols) for line in pty.frame())
+
+        # Fire wheel-up bursts while at the very top; the hint must appear.
+        saw_hint = False
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and not saw_hint:
+            _wheel_up(pty, n=5)
+            pty._pump(0.1)
+            saw_hint = any(_is_rule_row(line, cols) for line in pty.frame())
+        assert saw_hint, (
+            "Top boundary hint never rendered. Frame:\n" + "\n".join(pty.frame())
+        )
+
+        # Stop scrolling: the hint must clear once its duration elapses.
+        cleared = False
+        clear_deadline = time.monotonic() + 6.0
+        while time.monotonic() < clear_deadline:
+            pty._pump(0.3)
+            if not any(_is_rule_row(line, cols) for line in pty.frame()):
+                cleared = True
+                break
+        assert cleared, (
+            "Boundary hint never disappeared. Frame:\n" + "\n".join(pty.frame())
+        )
+
+        assert pty.quit(_QUIT_TIMEOUT)

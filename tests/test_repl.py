@@ -1156,6 +1156,64 @@ def test_reset_scroll_re_engages_follow():
     assert ctrl._last_scroll_time == 0.0
 
 
+# --- Scroll-boundary flash hints ---------------------------------------------
+
+
+def test_top_boundary_hint_activates_and_expires():
+    """A blocked wheel-up at the top activates the top hint with a deadline; it
+    clears once the duration elapses and leaves the bottom hint untouched."""
+    from miniclaude._repl import _HINT_DURATION
+
+    ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
+
+    assert ctrl._top_hint_active() is False
+    ctrl._flash_top_boundary()
+    assert ctrl._top_hint_active() is True
+    assert ctrl._bottom_hint_active() is False
+
+    # Still visible partway through the duration.
+    clock.advance(_HINT_DURATION - 0.05)
+    assert ctrl._top_hint_active() is True
+    # Cleared once the full duration has passed.
+    clock.advance(0.1)
+    assert ctrl._top_hint_active() is False
+
+
+def test_bottom_boundary_hint_activates_and_expires():
+    from miniclaude._repl import _HINT_DURATION
+
+    ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
+
+    assert ctrl._bottom_hint_active() is False
+    ctrl._flash_bottom_boundary()
+    assert ctrl._bottom_hint_active() is True
+    assert ctrl._top_hint_active() is False
+
+    clock.advance(_HINT_DURATION + 0.05)
+    assert ctrl._bottom_hint_active() is False
+
+
+def test_repeated_blocked_events_refresh_the_hint():
+    """A second blocked event extends the deadline (the hint keeps flashing)."""
+    from miniclaude._repl import _HINT_DURATION
+
+    ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
+
+    ctrl._flash_top_boundary()
+    clock.advance(_HINT_DURATION - 0.05)
+    # Refresh just before expiry: the hint stays active well past the original
+    # deadline.
+    ctrl._flash_top_boundary()
+    clock.advance(_HINT_DURATION - 0.05)
+    assert ctrl._top_hint_active() is True
+
+
 # --- Resize crash: auto-follow cursor vs served fragment lines ----------------
 
 
