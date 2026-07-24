@@ -220,6 +220,25 @@ async def test_demo_ends_with_one_result():
 
 
 @sync
+async def test_error_command_emits_non_streamed_text_and_error_result():
+    from claudestream import AssistantText
+
+    events = await _drive(MockSession(5), "error")
+    # The explanation arrives as an AssistantText with NO text deltas preceding it.
+    assert _concat_text(events) == ""
+    texts = [ev for ev in events if isinstance(ev, AssistantText)]
+    assert len(texts) == 1
+    assert "credit balance" in texts[0].text
+    # The closing Result is an error and carries the explanation.
+    results = [ev for ev in events if isinstance(ev, Result)]
+    assert len(results) == 1
+    assert results[0].is_error is True
+    assert "credit balance" in results[0].result
+    # A hard-failure turn emits no rate-limit events.
+    assert not [ev for ev in events if isinstance(ev, RateLimit)]
+
+
+@sync
 async def test_first_send_yields_system_init():
     from claudestream import SystemInit
 

@@ -299,6 +299,15 @@ class Repl:
         self._interrupt_task: asyncio.Task | None = None
         self._exit = False
 
+        # Whether top-level text/thinking deltas have rendered since the last
+        # flattened AssistantText/Thinking event. Used to decide, on each
+        # flattened event, whether the deltas already printed its content (drop)
+        # or nothing streamed it (render it -- e.g. hard-failure explanations
+        # that arrive with no preceding deltas). Reset per turn and after each
+        # flattened event so multi-message turns are handled block-by-block.
+        self._text_streamed = False
+        self._thinking_streamed = False
+
         # State tracked for howmuchleft
         self._model: str = model
         self._mode: str = permission_mode
@@ -409,6 +418,8 @@ class Repl:
         self._renderer = StreamRenderer(self._width)
         self._turn_active = True
         self._interrupt_pending = False
+        self._text_streamed = False
+        self._thinking_streamed = False
         refresh_task: asyncio.Task | None = None
         if self._input:
             refresh_task = asyncio.ensure_future(self._refresh_loop())
@@ -456,14 +467,38 @@ class Repl:
                 return
             delta_type = event.delta_type
             if delta_type == "text_delta":
+                self._text_streamed = True
                 p(r.feed_text(event.text or ""))
             elif delta_type == "thinking_delta":
+                self._thinking_streamed = True
                 delta = event.event.get("delta", {}) if isinstance(event.event, dict) else {}
                 p(r.feed_thinking(delta.get("thinking", "") or ""))
             return
 
-        # Flattened partial-message events already rendered by deltas -> ignore.
-        if isinstance(event, (AssistantText, Thinking)):
+        # Flattened partial-message events. Normally the deltas already rendered
+        # the same content, so we drop these to avoid double-printing. But a hard
+        # turn failure (e.g. auth/account rejection) sends the explanation as an
+        # AssistantText with NO preceding deltas -- render those, or the user sees
+        # nothing. Subagent blocks (parent_tool_use_id set) never render at the
+        # top level, matching the StreamDelta filtering above.
+        if isinstance(event, AssistantText):
+            if event.parent_tool_use_id is not None:
+                return
+            if self._text_streamed:
+                self._text_streamed = False  # deltas printed it; reset for next block
+            else:
+                p(r.feed_text(event.text or ""))
+                p(r.finish())
+            return
+
+        if isinstance(event, Thinking):
+            if event.parent_tool_use_id is not None:
+                return
+            if self._thinking_streamed:
+                self._thinking_streamed = False
+            else:
+                p(r.feed_thinking(event.text or ""))
+                p(r.finish())
             return
 
         if isinstance(event, ToolUse):
@@ -624,11 +659,15 @@ class Repl:
             _fmt_duration(event.duration_ms),
             f"{event.num_turns} turn(s)",
         ]
-        line = "── " + " · ".join(parts)
+        is_error = getattr(event, "is_error", False)
+        # On error, mark the line "error" and style it red. The explanatory text
+        # itself is rendered separately by the AssistantText path, so it is not
+        # duplicated here.
+        line = "── " + ("error · " if is_error else "") + " · ".join(parts)
         pct = _ctx_pct(event.model_usage, getattr(session, "model_name", None))
         if pct is not None:
             line += f" · ctx {pct}%"
-        return _dim(line) + "\n"
+        return (_red(line) if is_error else _dim(line)) + "\n"
 
     def _format_context(self, usage: Any) -> str:
         categories = list(getattr(usage, "categories", []) or [])

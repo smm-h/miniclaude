@@ -30,6 +30,7 @@ from typing import Any
 
 from claudestream import (
     ApiRetry,
+    AssistantText,
     BudgetThreshold,
     CompactBoundary,
     ContextCategory,
@@ -100,6 +101,7 @@ _MOCK_COMMANDS = [
     ("tools", "tool use/result pairs incl. an error and a subagent case"),
     ("dialogs", "a permission prompt and an AskUserQuestion, awaiting your answer"),
     ("status", "ApiRetry, BudgetThreshold, and CompactBoundary status events"),
+    ("error", "a non-streamed error explanation followed by an is_error result"),
     ("slow", "a long, slow stream for interrupt / type-ahead / resize testing"),
     ("md <markdown>", "stream the given markdown back verbatim"),
     ("demo", "run every section above in one turn"),
@@ -108,6 +110,13 @@ _MOCK_COMMANDS = [
 
 # Fabricated context window for the live-mode Result.model_usage entry.
 _MOCK_CONTEXT_WINDOW = 200_000
+
+# The explanation a hard turn failure sends as an AssistantText (no preceding
+# deltas), reproducing the account/auth-rejection shape the `error` command exercises.
+_MOCK_ERROR_TEXT = (
+    "Your credit balance is too low to access the Anthropic API. "
+    "Please go to Plans & Billing to upgrade or purchase credits.\n"
+)
 
 # Fixed offset that seeds the DEDICATED rate-limit RNG independently of the
 # content RNG, so rate-limit jitter never perturbs generated content.
@@ -146,6 +155,9 @@ class MockSession:
         self._interrupted = False
         self._context_tokens = 0
         self._pending_response: asyncio.Future | None = None
+        # Set by _gen_error so the turn's closing Result is is_error and rate-limit
+        # events are suppressed (reproducing the hard-failure event shape exactly).
+        self._error_pending = False
 
         # Recorded for test assertions (scripted mode) and harmless in live mode.
         self.sent: list[str] = []
@@ -209,8 +221,10 @@ class MockSession:
         arg = parts[1] if len(parts) > 1 else ""
         async for event in self._dispatch(cmd, arg):
             yield event
-        for rl in self._rate_limit_events():
-            yield rl
+        # A hard-failure turn emits no rate-limit events -- only the error result.
+        if not self._error_pending:
+            for rl in self._rate_limit_events():
+                yield rl
         yield self._make_result(start)
 
     def _rate_limit_events(self) -> list:
@@ -255,6 +269,8 @@ class MockSession:
             return self._gen_dialogs()
         if cmd == "status":
             return self._gen_status()
+        if cmd == "error":
+            return self._gen_error()
         if cmd == "slow":
             return self._gen_slow()
         if cmd == "md":
@@ -318,8 +334,24 @@ class MockSession:
     # --- Result fabrication (live mode) ---
 
     def _make_result(self, start: float) -> Result:
-        """Fabricate the closing Result, accumulating cost/tokens/context."""
+        """Fabricate the closing Result, accumulating cost/tokens/context.
+
+        When ``_error_pending`` is set (the ``error`` command), the Result is
+        is_error with a zero cost and carries the explanation text -- exactly the
+        shape a hard turn failure produces.
+        """
         self.turn_count += 1
+        if self._error_pending:
+            self._error_pending = False
+            return Result(
+                type="result",
+                subtype="error",
+                is_error=True,
+                result=_MOCK_ERROR_TEXT.strip(),
+                total_cost_usd=self.total_cost_usd,
+                duration_ms=(time.monotonic() - start) * 1000.0,
+                num_turns=self.turn_count,
+            )
         self.total_cost_usd = round(self.total_cost_usd + self._rng.uniform(0.001, 0.01), 6)
         self.total_tokens += self._rng.randint(200, 2000)
         self._context_tokens += self._rng.randint(1500, 6000)
@@ -471,6 +503,16 @@ class MockSession:
         async for event in self._stream_text("Recovered; continuing.\n"):
             yield event
 
+    async def _gen_error(self):
+        """A hard turn failure: an explanation as an AssistantText with NO deltas.
+
+        The closing Result (fabricated by _make_result) is is_error because this
+        sets _error_pending. No text deltas precede the AssistantText, so the REPL
+        must render it through the flattened-event path or the user sees nothing.
+        """
+        self._error_pending = True
+        yield AssistantText(type="assistant", text=_MOCK_ERROR_TEXT)
+
     async def _gen_slow(self, lines: int | None = None):
         if lines is None:
             lines = self._rng.randint(15, 25)
@@ -565,4 +607,10 @@ class MockSession:
         async for event in self._stream_text("\n## Slow\n\n"):
             yield event
         async for event in self._gen_slow(lines=8):
+            yield event
+        # Error section LAST: it flips the turn's closing Result to is_error, so
+        # the demo ends on a red error line -- the final rendering surface to show.
+        async for event in self._stream_text("\n## Error\n\n"):
+            yield event
+        async for event in self._gen_error():
             yield event

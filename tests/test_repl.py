@@ -129,18 +129,72 @@ async def test_thinking_delta_is_rendered():
 
 
 @sync
-async def test_assistant_text_flattened_event_is_ignored():
-    # AssistantText / Thinking flattened events must NOT be printed (deltas already did).
+async def test_assistant_text_flattened_event_after_deltas_is_dropped():
+    # When deltas ALREADY streamed the text, the flattened AssistantText / Thinking
+    # events that follow must be dropped -- rendering them would double-print.
     fake = FakeSession(
-        turns=[[AssistantText(type="assistant", text="DOUBLED"),
-                  Thinking(type="assistant", text="ALSO_DOUBLED"),
-                  _result()]]
+        turns=[[_text_delta("ALPHA"),
+                AssistantText(type="assistant", text="ALPHA"),
+                _thinking_delta("BETA"),
+                Thinking(type="assistant", text="BETA"),
+                _result()]]
     )
     repl, printer = make_repl(fake)
     await repl._run_turn(fake, "hi")
     plain = _plain(printer.text)
-    assert "DOUBLED" not in plain
-    assert "ALSO_DOUBLED" not in plain
+    assert plain.count("ALPHA") == 1  # streamed once, flattened copy dropped
+    assert plain.count("BETA") == 1
+
+
+@sync
+async def test_non_streamed_assistant_text_is_rendered():
+    # A hard turn failure sends its explanation as an AssistantText with NO preceding
+    # deltas. It must be rendered (previously it was silently dropped).
+    fake = FakeSession(
+        turns=[[AssistantText(type="assistant", text="Your credit balance is too low.\n"),
+                _result(is_error=True, result="Your credit balance is too low.")]]
+    )
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    assert "Your credit balance is too low." in _plain(printer.text)
+
+
+@sync
+async def test_non_streamed_thinking_is_rendered():
+    # A Thinking block with no preceding thinking deltas must be rendered.
+    fake = FakeSession(
+        turns=[[Thinking(type="assistant", text="pondering hard\n"), _result()]]
+    )
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    assert "pondering hard" in _plain(printer.text)
+
+
+@sync
+async def test_subagent_assistant_text_is_ignored():
+    # AssistantText from a subagent (parent_tool_use_id set) must never render at the
+    # top level, even though no top-level deltas preceded it.
+    fake = FakeSession(
+        turns=[[AssistantText(type="assistant", text="SUBTEXT", parent_tool_use_id="sub_1"),
+                _result()]]
+    )
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    assert "SUBTEXT" not in _plain(printer.text)
+
+
+@sync
+async def test_error_result_line_is_marked():
+    # A Result with is_error=True must render an error-styled (red) line with an
+    # "error" marker, distinct from a bare success line.
+    fake = FakeSession(
+        turns=[[_result(total_cost_usd=0.0, duration_ms=500, num_turns=1, is_error=True)]]
+    )
+    repl, printer = make_repl(fake)
+    await repl._run_turn(fake, "hi")
+    plain = _plain(printer.text)
+    assert "error" in plain
+    assert "\033[31m" in printer.text  # red styling on the error result line
 
 
 @sync
