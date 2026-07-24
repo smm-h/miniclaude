@@ -652,6 +652,30 @@ class Repl:
 
 # --- Production input controller (fullscreen prompt_toolkit Application) ------
 
+# Mouse-wheel coalescing divisor: the output window scrolls one real line only
+# every Nth wheel event, so scrolling is slow and controllable.
+_SCROLL_DIVISOR = 10
+
+
+def _render_info_at_bottom(info: Any) -> bool:
+    """True when the last content line is visible (the view is at the bottom).
+
+    Uses the window's render_info, which counts *wrapped* screen rows via
+    ``content_height`` -- so this is correct under wrapped long lines, unlike a
+    naive comparison against the logical newline count. Returns True when there
+    is no render_info yet (nothing scrolled == at bottom).
+    """
+    if info is None:
+        return True
+    try:
+        content_height = info.content_height
+        last = info.last_visible_line()
+    except Exception:  # noqa: BLE001 -- any render_info shape issue => treat as bottom
+        return True
+    if content_height <= 0:
+        return True
+    return last >= content_height - 1
+
 
 class _PromptController:
     """Fullscreen Application with output/input/status regions.
@@ -685,9 +709,11 @@ class _PromptController:
         # Number of blocks materialize_blocks was called with on the last
         # _materialize() (exposed for tests of the incremental memo).
         self._last_render_block_count: int = 0
-        # Auto-follow: when False the output window tracks the tail; set True
-        # while the user has scrolled up (scroll-lock, added in a later phase).
+        # Scroll-lock + mouse-wheel coalescing state.
         self._user_scrolled: bool = False
+        self._up_count: int = 0
+        self._down_count: int = 0
+        self._last_scroll_dir: str = ""
 
     # -- Output materialization (block-backed, width-live, memoized) -----------
 
@@ -742,6 +768,44 @@ class _PromptController:
         """Cursor row for the output window: tail when following, else pinned."""
         return vertical_scroll if self._user_scrolled else tail_line
 
+    # -- Mouse-wheel coalescing + scroll-lock ----------------------------------
+
+    def _on_scroll_up(self, do_move: Callable[[], None]) -> None:
+        """Handle one upward wheel event with divisor coalescing + scroll-lock."""
+        if self._last_scroll_dir != "up":
+            # Direction change: reset the opposite counter so a later reversal
+            # responds within one divisor's worth of events.
+            self._down_count = 0
+            self._last_scroll_dir = "up"
+        # Engage scroll-lock unconditionally on the first up-event of a burst.
+        self._user_scrolled = True
+        self._up_count += 1
+        if self._up_count >= _SCROLL_DIVISOR:
+            self._up_count = 0
+            do_move()
+
+    def _on_scroll_down(
+        self, do_move: Callable[[], None], at_bottom: Callable[[], bool]
+    ) -> None:
+        """Handle one downward wheel event; release the lock at the bottom."""
+        if self._last_scroll_dir != "down":
+            self._up_count = 0
+            self._last_scroll_dir = "down"
+        self._down_count += 1
+        if self._down_count >= _SCROLL_DIVISOR:
+            self._down_count = 0
+            do_move()
+            # Re-evaluate lock release after each REAL downward movement.
+            if at_bottom():
+                self._user_scrolled = False
+
+    def _reset_scroll(self) -> None:
+        """Re-engage auto-follow and clear coalescing state (on input submit)."""
+        self._user_scrolled = False
+        self._up_count = 0
+        self._down_count = 0
+        self._last_scroll_dir = ""
+
     def _build_app(self):
         from pathlib import Path
 
@@ -794,13 +858,30 @@ class _PromptController:
             allow_scroll_beyond_bottom=True,
         )
 
+        # Wrap the per-instance scroll methods with mouse-wheel coalescing and
+        # scroll-lock (see _on_scroll_up/_on_scroll_down).
+        _orig_scroll_up = output_window._scroll_up
+        _orig_scroll_down = output_window._scroll_down
+
+        def _wheel_up() -> None:
+            self._on_scroll_up(_orig_scroll_up)
+
+        def _wheel_down() -> None:
+            self._on_scroll_down(
+                _orig_scroll_down,
+                lambda: _render_info_at_bottom(output_window.render_info),
+            )
+
+        output_window._scroll_up = _wheel_up
+        output_window._scroll_down = _wheel_down
+
         # --- Input region (boxed, bottom) ---
         def _accept(buf: Buffer) -> bool:
             text = buf.text
             if not text.strip():
                 return False
             # Submitting input re-engages auto-follow.
-            self._user_scrolled = False
+            self._reset_scroll()
             if self._repl.turn_active:
                 self._repl.notice_queued(text)
             self._repl._queue.put_nowait(text)

@@ -124,6 +124,18 @@ class PtySession:
         assert self._master_fd is not None, "session not started"
         os.write(self._master_fd, data)
 
+    def resize(self, rows: int, cols: int) -> None:
+        """Resize the pty via TIOCSWINSZ.
+
+        Setting the window size on the terminal makes the kernel deliver
+        SIGWINCH to the child's foreground process group -- the same mechanism a
+        real terminal emulator uses when its window is resized.
+        """
+        assert self._master_fd is not None, "session not started"
+        _set_pty_size(self._master_fd, rows=rows, cols=cols)
+        self.rows = rows
+        self.cols = cols
+
     def _pump(self, timeout_slice: float = 0.5) -> str | None:
         """Read one chunk from the master, answering CPR; return decoded text.
 

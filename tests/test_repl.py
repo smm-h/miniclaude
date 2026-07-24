@@ -963,3 +963,145 @@ def test_content_line_count_matches_materialized_newlines():
     # _current_width falls back to repl width (80) when no app is running.
     expected = ctrl._materialize(80).count("\n")
     assert ctrl._content_line_count() == expected == 3
+
+
+# --- Phase 3: bottom detection (3.1) -----------------------------------------
+
+
+class _FakeRenderInfo:
+    """Stand-in for prompt_toolkit's WindowRenderInfo.
+
+    ``content_height`` counts *wrapped* screen rows; ``last_visible_line`` is
+    the last visible row index into that wrapped space.
+    """
+
+    def __init__(self, content_height, last):
+        self.content_height = content_height
+        self._last = last
+
+    def last_visible_line(self):
+        return self._last
+
+
+def test_bottom_detection_unwrapped():
+    from miniclaude._repl import _render_info_at_bottom
+
+    # 10 logical lines, none wrapped: content_height == 10.
+    assert _render_info_at_bottom(_FakeRenderInfo(10, 9)) is True
+    assert _render_info_at_bottom(_FakeRenderInfo(10, 4)) is False
+
+
+def test_bottom_detection_wrapped_uses_content_height_not_newlines():
+    from miniclaude._repl import _render_info_at_bottom
+
+    # 3 logical (long) lines that wrap into 12 screen rows. A naive
+    # newline-count comparison (3) would call last==5 "at bottom" (5 >= 2),
+    # which is WRONG. Using content_height (12) gives the correct answer.
+    assert _render_info_at_bottom(_FakeRenderInfo(12, 11)) is True
+    assert _render_info_at_bottom(_FakeRenderInfo(12, 5)) is False
+
+
+def test_bottom_detection_no_render_info_is_bottom():
+    from miniclaude._repl import _render_info_at_bottom
+
+    assert _render_info_at_bottom(None) is True
+    assert _render_info_at_bottom(_FakeRenderInfo(0, 0)) is True
+
+
+# --- Phase 3: scroll-lock + divisor coalescing (3.3) -------------------------
+
+
+def test_scroll_up_coalesces_by_divisor():
+    """Ten up-events move exactly one line; nine move none."""
+    from miniclaude._repl import _SCROLL_DIVISOR
+
+    assert _SCROLL_DIVISOR == 10
+    ctrl = _mk_controller()
+    moves = []
+    for _ in range(9):
+        ctrl._on_scroll_up(lambda: moves.append(1))
+    assert moves == []
+    ctrl._on_scroll_up(lambda: moves.append(1))
+    assert moves == [1]
+
+
+def test_first_up_event_disengages_follow():
+    ctrl = _mk_controller()
+    assert ctrl._user_scrolled is False
+    ctrl._on_scroll_up(lambda: None)
+    assert ctrl._user_scrolled is True
+
+
+def test_reaching_bottom_re_engages_follow():
+    """A real downward movement at the bottom releases the lock; not at bottom
+    keeps it engaged."""
+    ctrl = _mk_controller()
+    moves = []
+
+    # Locked, but never at the bottom: lock stays engaged.
+    ctrl._user_scrolled = True
+    ctrl._last_scroll_dir = "down"
+    for _ in range(10):
+        ctrl._on_scroll_down(lambda: moves.append(1), lambda: False)
+    assert moves == [1]
+    assert ctrl._user_scrolled is True
+
+    # Locked and now at the bottom: the next real move releases the lock.
+    moves.clear()
+    for _ in range(10):
+        ctrl._on_scroll_down(lambda: moves.append(1), lambda: True)
+    assert moves == [1]
+    assert ctrl._user_scrolled is False
+
+
+def test_direction_reversal_not_delayed_by_stale_counts():
+    """Reversing direction resets the opposite counter so the new direction
+    responds within one divisor's worth of events (not sooner, not later)."""
+    ctrl = _mk_controller()
+    moves = []
+
+    def never_bottom() -> bool:
+        return False
+
+    # Five downs: accumulates a partial down-count (no movement yet).
+    for _ in range(5):
+        ctrl._on_scroll_down(lambda: moves.append("d"), never_bottom)
+    assert moves == []
+
+    # Reverse to up: the stale down-count is reset.
+    ctrl._on_scroll_up(lambda: moves.append("u"))
+
+    # Back to down: must take a FULL divisor of events to move again -- the
+    # stale count of 5 must not shortcut it.
+    for _ in range(9):
+        ctrl._on_scroll_down(lambda: moves.append("d"), never_bottom)
+    assert "d" not in moves  # 9 downs since reversal: no movement
+    ctrl._on_scroll_down(lambda: moves.append("d"), never_bottom)
+    assert moves.count("d") == 1  # the 10th moves exactly once
+
+
+def test_new_output_while_locked_does_not_move_view():
+    """While scroll-locked, the cursor row stays pinned to the scroll position
+    regardless of how much new output arrives."""
+    ctrl = _mk_controller()
+    ctrl._user_scrolled = True
+    # Pinned to vertical_scroll (5), independent of the growing tail line.
+    assert ctrl._cursor_y(tail_line=100, vertical_scroll=5) == 5
+    assert ctrl._cursor_y(tail_line=500, vertical_scroll=5) == 5
+
+    # Following again: the cursor tracks the tail line.
+    ctrl._user_scrolled = False
+    assert ctrl._cursor_y(tail_line=100, vertical_scroll=5) == 100
+
+
+def test_reset_scroll_re_engages_follow():
+    ctrl = _mk_controller()
+    ctrl._user_scrolled = True
+    ctrl._up_count = 4
+    ctrl._down_count = 2
+    ctrl._last_scroll_dir = "up"
+    ctrl._reset_scroll()
+    assert ctrl._user_scrolled is False
+    assert ctrl._up_count == 0
+    assert ctrl._down_count == 0
+    assert ctrl._last_scroll_dir == ""

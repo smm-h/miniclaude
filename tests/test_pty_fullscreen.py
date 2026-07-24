@@ -164,3 +164,61 @@ def test_dialogs_suspend_and_restore(rows: int, cols: int):
         assert pty._proc is not None and pty._proc.poll() is None
 
         assert pty.quit(_QUIT_TIMEOUT)
+
+
+@pytest.mark.timeout(120)
+def test_resize_re_renders_table_at_new_width():
+    """Resizing the pty (TIOCSWINSZ + kernel SIGWINCH) re-renders a table at the
+    new width with the layout intact -- automatically, with no resize handler."""
+    start_rows, start_cols = 40, 120
+    new_rows, new_cols = 50, 210
+    with PtySession(_argv(), rows=start_rows, cols=start_cols) as pty:
+        assert pty.read_until("┌", _STARTUP_TIMEOUT)
+
+        pty.send(b"table\r")
+        assert pty.read_until("┴", _TURN_TIMEOUT), (
+            f"Table never rendered at the initial size. Output:\n{pty.raw_text}"
+        )
+        _settle(pty)
+
+        # Widest table row before the resize (bounded by the old 120-col width).
+        before = pty.frame()
+        width_before = max(
+            (len(line.rstrip()) for line in before if "│" in line), default=0
+        )
+        assert _lowest_frame_border_row(before) == start_rows - 4
+
+        pre_len = len(pty.raw_text)
+        pty.resize(new_rows, new_cols)
+
+        # The SIGWINCH-driven repaint re-materializes the table at the new
+        # width: a fresh table bottom border appears after the resize point.
+        deadline = time.monotonic() + 15.0
+        re_rendered = False
+        while time.monotonic() < deadline:
+            pty._pump(0.3)
+            if "┴" in pty.raw_text[pre_len:]:
+                re_rendered = True
+                break
+        assert re_rendered, (
+            "Table was not re-rendered after resize. Output since resize:\n"
+            + pty.raw_text[pre_len:]
+        )
+
+        _settle(pty)
+        after = pty.frame(rows=new_rows, cols=new_cols)
+        assert "Window too small" not in "\n".join(after)
+        assert any("┴" in line for line in after), (
+            "Table missing after resize. Frame:\n" + "\n".join(after)
+        )
+        # Layout stays intact: frame anchored to the (new) bottom.
+        assert _lowest_frame_border_row(after) == new_rows - 4
+        # The table re-flowed to use the wider terminal.
+        width_after = max(
+            (len(line.rstrip()) for line in after if "│" in line), default=0
+        )
+        assert width_after > width_before, (
+            f"Table did not widen on resize: {width_before} -> {width_after}"
+        )
+
+        assert pty.quit(_QUIT_TIMEOUT)
