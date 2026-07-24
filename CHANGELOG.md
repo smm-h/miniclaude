@@ -2,6 +2,53 @@
 
 # Changelog
 
+## 0.2.0
+
+Fullscreen TUI overhaul: bottom-anchored fullscreen interface with slow, controllable mouse-wheel scrolling and scroll-boundary hints, tables with row separators, a live rate-limit status bar, and a seedable mock mode for offline TUI testing.
+
+<details>
+<summary>Context</summary>
+
+The presentation layer moved from inline scrollback rendering to a fullscreen application to fix layout artifacts such as input appearing mid-screen and "Window too small" errors. Wheel scrolling was deliberately slowed to one-tenth of raw wheel speed, with burst responsiveness so the first flick still moves a line. Mock mode was added to exercise the TUI without a live Claude session.
+
+</details>
+
+### Breaking
+
+- **Breaking.** Removed the startup banner. Session and cwd info provided by howmuchleft.
+- **Breaking.** Rate limit info no longer printed per-turn; displayed via howmuchleft status lines.
+- **Fullscreen TUI.** The REPL now runs as a fullscreen application (alternate screen): output scrolls in-app with mouse wheel, input is anchored to the bottom, and terminal-native scrollback is no longer used.
+
+### Features
+
+- **New feature.** Claude-Code-style boxed input with howmuchleft status lines replacing the old status bar.
+- **New feature.** Tables render with box-drawing borders, cell wrapping (word-boundary breaking, ANSI state preservation), and a constraint-based column width solver that prioritizes header readability.
+- Tables re-render on terminal resize
+- **Mock mode.** New `miniclaude mock` command: a REPL against a fake session for testing the TUI without the Claude CLI. Mock commands (table, text, thinking, tools, dialogs, status, slow, md, demo, help) exercise each rendering surface; `--seed` makes random content reproducible.
+- **Table separators.** Rendered tables now draw a heavy rule under the header and light rules between every body row.
+- **Mock mode status bar.** Mock sessions now emit deterministic seed-derived rate-limit data, so the status bar renders fully populated.
+- **Slow, controllable scrolling.** Mouse-wheel scrolling now moves one line per ten wheel events with scroll-lock (auto-follow pauses while scrolled up, resumes at bottom).
+- **Scroll boundary hints.** Hitting the top or bottom of the scrollback flashes a horizontal hint at the corresponding edge.
+
+### Fixes
+
+- **Fix.** Harmless rate-limit lines no longer clutter the transcript.
+- **Fix.** Table column alignment now accounts for emoji and wide character display width.
+- Input box now sizes to content instead of wasting 5 fixed lines
+- **Fix.** Table rendering correctly aligns columns containing emoji and wide characters, with golden tests for alignment, truncation, and mixed content.
+- Tables rendered during a turn now use the current terminal width instead of the width captured at turn start, so mid-turn resizes no longer produce stale-width tables.
+- Exceptions in the SIGWINCH repaint handler are now caught and displayed as a dim error line instead of being silently swallowed by asyncio.
+- Input area now renders at the bottom of the terminal instead of the top.
+- Terminal resize now correctly re-renders tables without creating duplicates in scrollback.
+- **Fix.** Corrected AttributeError on startup: `shutil.get_terminal_size().rows` does not exist, use `.lines` instead.
+- **Fix.** Tables inside code fences are now rendered as plain ASCII tables instead of being parsed as markdown tables.
+- **Fix startup crash with strictcli >= 0.29.** `miniclaude` failed at import ("handler missing parameter") under the new strictcli handler contract; command handlers now accept the injected context argument.
+- **Status bar rate limits.** Rate-limit events from the CLI now populate the status bar's limit rows, which previously always showed placeholders.
+- **Fixed a crash on terminal resize.** Resizing while output contained re-rendered tables could crash the app with an internal indexing error.
+- **Scrolling responds to small flicks.** The first wheel event of a burst always scrolls one line; sustained scrolling remains slowed to one-tenth.
+- **Mock tables align in all terminals.** Mock-generated content is now ASCII-only; the `wide` command is removed since emoji/CJK render at unpredictable widths in real terminals.
+- **Errors are visible.** Hard turn failures (e.g. auth/account rejections) now render their explanation and mark the result line as an error, instead of showing a bare zero-cost result.
+
 ## 0.1.0
 
 First release: lean, snappy inline terminal client for Claude Code.
