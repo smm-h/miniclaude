@@ -1,7 +1,7 @@
 [project]
 name = "miniclaude"
 version = "0.1.0"
-description = "A lean, snappy inline terminal client for Claude Code"
+description = "A lean, snappy fullscreen terminal client for Claude Code"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

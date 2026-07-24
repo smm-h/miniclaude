@@ -1,10 +1,10 @@
 # miniclaude
 
-A lean, snappy inline terminal client for Claude Code sessions — a minimal alternative frontend to the official TUI. It drives the official `claude` CLI through the [claudestream](https://pypi.org/project/claudestream/) library, so tools, permissions, sessions, and authentication are all the real thing; miniclaude only replaces the presentation layer.
+A lean, snappy fullscreen terminal client for Claude Code sessions — a minimal alternative frontend to the official TUI. It drives the official `claude` CLI through the [claudestream](https://pypi.org/project/claudestream/) library, so tools, permissions, sessions, and authentication are all the real thing; miniclaude only replaces the presentation layer.
 
 ## Design stance
 
-- **Inline, scrollback-native rendering.** Output goes straight into your terminal's own scrollback, so its native search and copy keep working. No alternate screen, minimal redraw.
+- **Fullscreen, block-backed rendering.** Output is modelled as blocks and materialized into a scrollable output region on the alternate screen. Scroll with the mouse wheel; the view holds where you leave it (scroll-lock) and re-flows tables to the live terminal width on resize.
 - **Line-grain streaming markdown.** Assistant prose is styled and emitted line by line as it arrives (headers, bullets, inline code, links, code fences). Tables are the one buffered exception, held until complete and printed with aligned columns.
 - **Dense tool activity.** Each tool call is one line (`▸ ToolName arg`); each result is one dim line (`✓`/`✗` plus a `(+N lines)` count). Subagent activity is indented.
 - **Interactive tools that work in the terminal.** Permission prompts show a real decision surface (the Bash command, a colored diff for edits, a preview for writes) above numbered Allow/Deny choices. AskUserQuestion is answered through plain numbered prompts (single- and multi-select).

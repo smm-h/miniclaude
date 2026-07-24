@@ -1,7 +1,7 @@
 """Offline pty smoke test for the miniclaude REPL, driven by the mock session.
 
 Spawns ``miniclaude mock --seed 7`` inside a pseudo-terminal via the shared
-:class:`tests._pty_harness.PtySession`, waits for the inline input frame, sends
+:class:`tests._pty_harness.PtySession`, waits for the input frame, sends
 one ``md <markdown>`` turn (which the mock streams back verbatim), asserts the
 marker text renders, and quits. Unlike the ``integration`` smoke test, this
 needs zero live prerequisites -- no claude binary, no claudewheel profile, no
@@ -31,9 +31,9 @@ _MARKER = "hello-MARKER"
 def test_mock_repl_pty_smoke():
     argv = ["uv", "run", "miniclaude", "mock", "--seed", "7"]
     with PtySession(argv, rows=24, cols=80) as pty:
-        # Wait for the inline input frame (box-drawing char from the Frame widget).
+        # Wait for the input frame (box-drawing char from the Frame widget).
         assert pty.read_until("┌", _STARTUP_TIMEOUT), (
-            f"Inline frame never appeared. Output so far:\n{pty.raw_text}"
+            f"Input frame never appeared. Output so far:\n{pty.raw_text}"
         )
 
         # `md <markdown>` streams the given markdown back verbatim.

@@ -4,7 +4,7 @@ Generalizes the spawn / size / CPR-answering / read-until / graceful-quit /
 teardown logic that the REPL integration smoke test used to inline. A
 :class:`PtySession` launches an arbitrary argv inside a pty at a chosen
 rows x cols, answers the Cursor Position Report (CPR) requests prompt_toolkit
-emits in inline mode, and exposes both the raw accumulated output and a
+emits at startup, and exposes both the raw accumulated output and a
 pyte-reconstructed visible frame for assertions.
 
 This is a test helper, not a test module -- the underscore-prefixed name keeps
@@ -36,10 +36,10 @@ from tests._pty_screen import PtyScreen
 # Repo root = parent of the tests/ directory that holds this file.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# CPR request prompt_toolkit sends in inline mode to discover the cursor row/col.
+# CPR request prompt_toolkit sends at startup to discover the cursor row/col.
 _CPR_REQUEST = "\x1b[6n"
 # Our canned reply: cursor at row 1, col 1. Enough to keep prompt_toolkit's
-# inline renderer out of its degraded fallback mode.
+# renderer out of its degraded fallback mode.
 _CPR_REPLY = b"\x1b[1;1R"
 
 
@@ -79,7 +79,7 @@ class PtySession:
 
     def __enter__(self) -> "PtySession":
         master_fd, slave_fd = os.openpty()
-        # A nonzero size is mandatory: the default 0x0 pty prevents any inline
+        # A nonzero size is mandatory: the default 0x0 pty prevents any
         # rendering, so prompt_toolkit draws nothing.
         _set_pty_size(slave_fd, rows=self.rows, cols=self.cols)
 

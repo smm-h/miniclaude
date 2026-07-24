@@ -1,7 +1,7 @@
 """Offline pty test: the status bar renders populated rate-limit rows.
 
 Spawns ``miniclaude mock --seed N`` inside a pseudo-terminal, waits for the
-inline input frame, and confirms the howmuchleft status bar starts out showing
+input frame, and confirms the howmuchleft status bar starts out showing
 the ``?%`` placeholder (no rate-limit data yet). After one mock turn -- which
 emits seed-derived RateLimit events -- the placeholder disappears from the
 visible status-bar region, proving the events reached howmuchleft's stdin.
@@ -39,10 +39,10 @@ _PLACEHOLDER = "?%"
 def test_status_bar_rate_limits_populated():
     argv = ["uv", "run", "miniclaude", "mock", "--seed", "11"]
     with PtySession(argv, rows=24, cols=80) as pty:
-        # The inline frame plus the placeholder rate-limit rows must appear
+        # The input frame plus the placeholder rate-limit rows must appear
         # first: with no RateLimit events yet, howmuchleft renders "?%".
         assert pty.read_until("┌", _STARTUP_TIMEOUT), (
-            f"Inline frame never appeared. Output so far:\n{pty.raw_text}"
+            f"Input frame never appeared. Output so far:\n{pty.raw_text}"
         )
         assert pty.read_until(_PLACEHOLDER, _STARTUP_TIMEOUT), (
             f"Rate-limit placeholder never appeared. Output:\n{pty.raw_text}"

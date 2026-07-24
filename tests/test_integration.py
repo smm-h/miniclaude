@@ -40,11 +40,11 @@ def test_repl_pty_smoke():
         "--permission-mode", "default",
     ]
     with PtySession(argv, rows=24, cols=80) as pty:
-        # Wait for the inline app to render. The Frame widget around the input
-        # area uses box-drawing chars -- seeing "┌" proves the Application is up
-        # and the input area is visible.
+        # Wait for the app to render. The Frame widget around the input area
+        # uses box-drawing chars -- seeing "┌" proves the Application is up and
+        # the input area is visible.
         assert pty.read_until("┌", _STARTUP_TIMEOUT), (
-            f"Inline frame never appeared. Output so far:\n{pty.raw_text}"
+            f"Input frame never appeared. Output so far:\n{pty.raw_text}"
         )
 
         # The marker "MINIOK" is asked for as MINI + OK so the literal token

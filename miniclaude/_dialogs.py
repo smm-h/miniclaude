@@ -26,7 +26,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, Sequence
 
-# --- ANSI helpers (self-contained; raw SGR strings for patch_stdout(raw=True)) ---
+# --- ANSI helpers (self-contained raw SGR strings) ---
 
 RESET = "\x1b[0m"
 

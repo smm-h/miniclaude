@@ -328,7 +328,7 @@ class Repl:
             self._queue.put_nowait(None)
         except Exception:
             pass
-        # In production, also exit the inline Application.
+        # In production, also exit the fullscreen Application.
         if self._input and self._input._app and self._input._app.is_running:
             self._input._app.exit()
 
@@ -422,7 +422,7 @@ class Repl:
                 self._invalidate()
 
             self._renderer.on_table = _on_table
-        # Echo the user's input into scrollback
+        # Echo the user's input into the output region
         lines = prompt.strip().splitlines()
         echo = lines[0][:100] + ("…" if len(lines) > 1 or len(lines[0]) > 100 else "")
         self._printer(_dim(f"> {echo}") + "\n")
@@ -563,10 +563,10 @@ class Repl:
         # UnknownEvent / ControlResponse / anything else -> ignored.
 
     async def _with_prompt_suspended(self, coro: Awaitable[Any]) -> Any:
-        """Run a modal coroutine with the inline app temporarily suspended.
+        """Run a modal coroutine with the fullscreen app temporarily suspended.
 
         In tests (no input controller) the coroutine simply runs. In production
-        ``in_terminal`` suspends the inline Application so the modal's own
+        ``in_terminal`` suspends the fullscreen Application so the modal's own
         widgets (ChoiceInput / PromptSession) can run without conflict.
         """
         if self._input is None:
