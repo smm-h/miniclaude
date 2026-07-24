@@ -698,6 +698,10 @@ class _PromptController:
     def __init__(self, repl: Repl) -> None:
         self._repl = repl
         self._app: Any | None = None
+        # Output window / control handles (assigned in _build_app). Exposed so
+        # the cursor callback and the boundary hints can reach them.
+        self._output_window: Any | None = None
+        self._output_control: Any | None = None
         # Structured output blocks -- the single source of truth for the
         # scrollable output region.
         self._output_blocks: list[OutputBlock] = []
@@ -714,6 +718,12 @@ class _PromptController:
         self._up_count: int = 0
         self._down_count: int = 0
         self._last_scroll_dir: str = ""
+        # Number of logical lines in the output snapshot the control is currently
+        # SERVING (set by _serve_output). The cursor position derives from this
+        # exact snapshot -- never a fresh re-materialization at a possibly-changed
+        # width -- so the auto-follow tail y can never index past the fragment
+        # lines prompt_toolkit is serving (which crashed on resize).
+        self._served_line_count: int = 0
 
     # -- Output materialization (block-backed, width-live, memoized) -----------
 
@@ -764,9 +774,41 @@ class _PromptController:
         """Logical (newline) line count of the materialized output."""
         return self._materialize(self._current_width()).count("\n")
 
+    def _serve_output(self, width: int) -> str:
+        """Materialize the output at ``width`` AND snapshot its served line count.
+
+        This is the text the control actually serves this render. Recording the
+        line count here (rather than re-deriving it in the cursor callback) is
+        what keeps the served fragment lines and the cursor y in lock-step: a
+        prompt_toolkit control pins its fragment text to ``render_counter``, so a
+        width change mid-render must not make the cursor callback disagree about
+        how many lines exist. ``count("\\n") + 1`` matches prompt_toolkit's own
+        ``split_lines`` fragment-line count.
+        """
+        text = self._materialize(width)
+        self._served_line_count = text.count("\n") + 1
+        return text
+
     def _cursor_y(self, tail_line: int, vertical_scroll: int) -> int:
         """Cursor row for the output window: tail when following, else pinned."""
         return vertical_scroll if self._user_scrolled else tail_line
+
+    def _cursor_point(self, vertical_scroll: int):
+        """The output window's cursor Point, clamped to the served snapshot.
+
+        y derives from ``_served_line_count`` (the exact snapshot the control is
+        serving) and is clamped to ``[0, line_count - 1]``. The clamp neutralizes
+        the one-past-the-end auto-follow tail convention under
+        ``allow_scroll_beyond_bottom`` so y can never index past the fragment
+        lines -- the crash the resize path hit.
+        """
+        from prompt_toolkit.data_structures import Point
+
+        line_count = max(1, self._served_line_count)
+        tail_line = line_count - 1
+        y = self._cursor_y(tail_line, vertical_scroll)
+        y = max(0, min(y, line_count - 1))
+        return Point(x=0, y=y)
 
     # -- Mouse-wheel coalescing + scroll-lock ----------------------------------
 
@@ -840,11 +882,12 @@ class _PromptController:
             if width != self._repl._width:
                 self._repl._width = width
                 self._repl._renderer.width = width
-            return ANSI(self._materialize(width))
+            # _serve_output records the served snapshot's line count, which the
+            # cursor callback below reads -- keeping the two in lock-step.
+            return ANSI(self._serve_output(width))
 
         def _get_cursor_position() -> Point:
-            tail_line = self._content_line_count()
-            return Point(x=0, y=self._cursor_y(tail_line, output_window.vertical_scroll))
+            return self._cursor_point(output_window.vertical_scroll)
 
         output_control = FormattedTextControl(
             text=_get_output_text,
@@ -857,6 +900,8 @@ class _PromptController:
             scroll_offsets=ScrollOffsets(bottom=0),
             allow_scroll_beyond_bottom=True,
         )
+        self._output_control = output_control
+        self._output_window = output_window
 
         # Wrap the per-instance scroll methods with mouse-wheel coalescing and
         # scroll-lock (see _on_scroll_up/_on_scroll_down).

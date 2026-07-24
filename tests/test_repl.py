@@ -1105,3 +1105,71 @@ def test_reset_scroll_re_engages_follow():
     assert ctrl._up_count == 0
     assert ctrl._down_count == 0
     assert ctrl._last_scroll_dir == ""
+
+
+# --- Resize crash: auto-follow cursor vs served fragment lines ----------------
+
+
+def _wrapping_table_block():
+    """A table whose rendered line count grows sharply as the width shrinks."""
+    return TableBlock(
+        TableData(
+            header_rows=[["Name", "Description"]],
+            body_rows=[
+                [
+                    "Alice",
+                    "A moderately long description that will wrap around "
+                    "several times when the window is narrow " * 3,
+                ]
+            ],
+            aligns=["left", "left"],
+        )
+    )
+
+
+def _find_output_control(app):
+    """The output FormattedTextControl (the only one with get_cursor_position)."""
+    for control in app.layout.find_all_controls():
+        if getattr(control, "get_cursor_position", None) is not None:
+            return control
+    raise AssertionError("output control not found in layout")
+
+
+def test_resize_does_not_crash_from_stale_autofollow_cursor():
+    """Regression: on a width change, the auto-follow tail cursor y must not
+    exceed the fragment lines the control is currently serving.
+
+    prompt_toolkit pins the control's fragment text to ``render_counter`` (so it
+    is served from the wide-width materialization), while our cursor callback
+    recomputes independently. If a resize lands between those two, a narrow-width
+    tail y indexes past the wide-width fragment lines and prompt_toolkit crashes
+    in ``_scroll_when_linewrapping`` -> ``get_height_for_line`` -> ``fragment_lines[i]``.
+    """
+    from prompt_toolkit.application.current import set_app
+
+    ctrl = _mk_controller()
+    ctrl._output_blocks = [ProseBlock("intro\n"), _wrapping_table_block()]
+
+    app = ctrl._build_app()
+    output_control = _find_output_control(app)
+
+    wide, narrow = 200, 24
+    with set_app(app):
+        # Render pass at the wide width: this materializes the fragment text and
+        # pins it in the control's per-render-counter fragment cache.
+        ctrl._repl._width = wide
+        content_wide = output_control.create_content(wide, None)
+        _ = content_wide.line_count  # force evaluation
+
+        # A resize now shrinks the width WITHOUT advancing render_counter, so the
+        # served fragment lines stay wide (few) while the cursor recomputes narrow
+        # (many). This is the exact race that crashed on real terminal resizes.
+        ctrl._repl._width = narrow
+        content = output_control.create_content(narrow, None)
+
+        # Drive the same call prompt_toolkit makes during scroll adjustment. On
+        # the unfixed code this raises IndexError; the fix clamps the cursor y to
+        # the served snapshot's line count.
+        content.get_height_for_line(content.cursor_position.y, narrow, None)
+
+        assert content.cursor_position.y < content.line_count
