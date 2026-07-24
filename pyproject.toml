@@ -33,4 +33,5 @@ dev = [
 [tool.pytest.ini_options]
 markers = [
     "integration: end-to-end tests that spawn a real Claude CLI in a pty (slow, network)",
+    "pty: tests that drive a miniclaude command inside a pseudo-terminal (no live CLI/profile/network needed)",
 ]

@@ -8,6 +8,23 @@ import shutil
 import pytest
 
 
+def _pty_unavailable_reason() -> str | None:
+    """Return a skip reason if a pseudo-terminal cannot be allocated, else None.
+
+    Allocating and immediately closing a pty is the cheapest way to probe whether
+    the environment supports the terminal-driven tests at all. Shared by both the
+    ``pty`` and ``integration`` gates so the pty capability check lives in exactly
+    one place.
+    """
+    try:
+        master_fd, slave_fd = os.openpty()
+    except OSError as exc:
+        return f"pty allocation unavailable: {exc}"
+    os.close(master_fd)
+    os.close(slave_fd)
+    return None
+
+
 def _missing_real_cli_prereqs(profile: str) -> str | None:
     """Return a skip reason if real-CLI prerequisites are absent, else None.
 
@@ -35,28 +52,31 @@ def _missing_real_cli_prereqs(profile: str) -> str | None:
         return f"claudewheel profile {profile!r} unavailable: {exc}"
     if not env:
         return f"claudewheel profile {profile!r} resolved to empty env"
-    try:
-        master_fd, slave_fd = os.openpty()
-    except OSError as exc:
-        return f"pty allocation unavailable: {exc}"
-    else:
-        os.close(master_fd)
-        os.close(slave_fd)
-    return None
+    return _pty_unavailable_reason()
 
 
 @pytest.fixture(autouse=True)
-def _skip_without_real_cli(request):
-    """Skip integration-marked tests when the real claude CLI/profile/pty is absent.
+def _skip_without_prereqs(request):
+    """Skip pty/integration-marked tests when their prerequisites are absent.
 
-    Applies only to tests carrying ``@pytest.mark.integration`` (including the
-    module-level ``pytestmark``). Where the prerequisites exist (developer
-    machines with a configured profile and a real terminal), the tests run
-    normally.
+    Two independent gates share a single pty-availability probe:
+
+    - ``@pytest.mark.integration`` keeps the full three-way gate (claude binary +
+      claudewheel profile + pty), since it drives a live model turn.
+    - ``@pytest.mark.pty`` gates ONLY on pty availability -- these tests spawn a
+      miniclaude command against a fake/mock session and need no live CLI,
+      profile, or network.
+
+    Where the prerequisites exist (developer machines with a real terminal, and
+    for integration a configured profile), the tests run normally.
     """
-    if request.node.get_closest_marker("integration") is None:
+    if request.node.get_closest_marker("integration") is not None:
+        profile = getattr(request.module, "PROFILE", "personal")
+        reason = _missing_real_cli_prereqs(profile)
+        if reason:
+            pytest.skip(reason)
         return
-    profile = getattr(request.module, "PROFILE", "personal")
-    reason = _missing_real_cli_prereqs(profile)
-    if reason:
-        pytest.skip(reason)
+    if request.node.get_closest_marker("pty") is not None:
+        reason = _pty_unavailable_reason()
+        if reason:
+            pytest.skip(reason)
