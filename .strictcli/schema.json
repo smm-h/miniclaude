@@ -49,7 +49,7 @@
   "project_id": "miniclaude",
   "name": "miniclaude",
   "version": "0.1.0",
-  "help": "A lean, snappy inline terminal client for Claude Code",
+  "help": "A lean, snappy fullscreen terminal client for Claude Code",
   "commands": {
     "version": {
       "name": "version",
@@ -57,7 +57,7 @@
     },
     "repl": {
       "name": "repl",
-      "help": "Start the interactive inline REPL",
+      "help": "Start the interactive fullscreen REPL",
       "flags": [
         {
           "name": "profile",
