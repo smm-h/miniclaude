@@ -1008,21 +1008,75 @@ def test_bottom_detection_no_render_info_is_bottom():
     assert _render_info_at_bottom(_FakeRenderInfo(0, 0)) is True
 
 
-# --- Phase 3: scroll-lock + divisor coalescing (3.3) -------------------------
+# --- Phase 3: scroll-lock + burst coalescing (3.3) ---------------------------
+
+
+class _FakeClock:
+    """A patchable monotonic clock for deterministic scroll-burst tests."""
+
+    def __init__(self, start: float = 100.0) -> None:
+        self.t = start
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, dt: float) -> None:
+        self.t += dt
 
 
 def test_scroll_up_coalesces_by_divisor():
-    """Ten up-events move exactly one line; nine move none."""
+    """Within a sustained burst the first event moves, then every 10th moves."""
     from miniclaude._repl import _SCROLL_DIVISOR
 
     assert _SCROLL_DIVISOR == 10
     ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
     moves = []
-    for _ in range(9):
+    # First event moves; the next nine in the same burst do not.
+    for _ in range(10):
         ctrl._on_scroll_up(lambda: moves.append(1))
-    assert moves == []
-    ctrl._on_scroll_up(lambda: moves.append(1))
+        clock.advance(0.01)
     assert moves == [1]
+    # The 11th event (still the same burst) moves again.
+    ctrl._on_scroll_up(lambda: moves.append(1))
+    assert moves == [1, 1]
+
+
+def test_small_flick_moves_exactly_one_line():
+    """A 3-event flick moves exactly one line -- the first event of the burst."""
+    ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
+    moves = []
+    for _ in range(3):
+        ctrl._on_scroll_up(lambda: moves.append(1))
+        clock.advance(0.05)
+    assert moves == [1]
+
+
+def test_two_flicks_separated_by_gap_move_two_lines():
+    """Two flicks separated by more than the burst gap each move one line."""
+    ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
+    moves = []
+    ctrl._on_scroll_up(lambda: moves.append(1))  # burst 1
+    clock.advance(0.5)  # > _SCROLL_BURST_GAP: burst ends
+    ctrl._on_scroll_up(lambda: moves.append(1))  # burst 2
+    assert moves == [1, 1]
+
+
+def test_sustained_burst_moves_every_tenth():
+    """Thirty events in one uninterrupted burst move three lines (1, 11, 21)."""
+    ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
+    moves = []
+    for _ in range(30):
+        ctrl._on_scroll_up(lambda: moves.append(1))
+        clock.advance(0.01)
+    assert len(moves) == 3
 
 
 def test_first_up_event_disengages_follow():
@@ -1036,48 +1090,42 @@ def test_reaching_bottom_re_engages_follow():
     """A real downward movement at the bottom releases the lock; not at bottom
     keeps it engaged."""
     ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
     moves = []
 
-    # Locked, but never at the bottom: lock stays engaged.
+    # Locked, first down-event of a burst moves but is not at the bottom: the
+    # lock stays engaged.
     ctrl._user_scrolled = True
-    ctrl._last_scroll_dir = "down"
-    for _ in range(10):
-        ctrl._on_scroll_down(lambda: moves.append(1), lambda: False)
+    ctrl._on_scroll_down(lambda: moves.append(1), lambda: False)
     assert moves == [1]
     assert ctrl._user_scrolled is True
 
-    # Locked and now at the bottom: the next real move releases the lock.
+    # A later burst whose move lands at the bottom releases the lock.
     moves.clear()
-    for _ in range(10):
-        ctrl._on_scroll_down(lambda: moves.append(1), lambda: True)
+    clock.advance(0.5)  # new burst
+    ctrl._on_scroll_down(lambda: moves.append(1), lambda: True)
     assert moves == [1]
     assert ctrl._user_scrolled is False
 
 
-def test_direction_reversal_not_delayed_by_stale_counts():
-    """Reversing direction resets the opposite counter so the new direction
-    responds within one divisor's worth of events (not sooner, not later)."""
+def test_direction_change_starts_new_burst():
+    """Reversing direction ends the burst; the new direction's first event moves
+    one line immediately."""
     ctrl = _mk_controller()
+    clock = _FakeClock()
+    ctrl._clock = clock
     moves = []
 
-    def never_bottom() -> bool:
-        return False
+    # Three ups in a burst: only the first moves.
+    for _ in range(3):
+        ctrl._on_scroll_up(lambda: moves.append("u"))
+        clock.advance(0.01)
+    assert moves == ["u"]
 
-    # Five downs: accumulates a partial down-count (no movement yet).
-    for _ in range(5):
-        ctrl._on_scroll_down(lambda: moves.append("d"), never_bottom)
-    assert moves == []
-
-    # Reverse to up: the stale down-count is reset.
-    ctrl._on_scroll_up(lambda: moves.append("u"))
-
-    # Back to down: must take a FULL divisor of events to move again -- the
-    # stale count of 5 must not shortcut it.
-    for _ in range(9):
-        ctrl._on_scroll_down(lambda: moves.append("d"), never_bottom)
-    assert "d" not in moves  # 9 downs since reversal: no movement
-    ctrl._on_scroll_down(lambda: moves.append("d"), never_bottom)
-    assert moves.count("d") == 1  # the 10th moves exactly once
+    # Reverse to down: a fresh burst, so it moves immediately.
+    ctrl._on_scroll_down(lambda: moves.append("d"), lambda: False)
+    assert moves == ["u", "d"]
 
 
 def test_new_output_while_locked_does_not_move_view():
@@ -1105,6 +1153,7 @@ def test_reset_scroll_re_engages_follow():
     assert ctrl._up_count == 0
     assert ctrl._down_count == 0
     assert ctrl._last_scroll_dir == ""
+    assert ctrl._last_scroll_time == 0.0
 
 
 # --- Resize crash: auto-follow cursor vs served fragment lines ----------------

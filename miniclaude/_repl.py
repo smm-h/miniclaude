@@ -652,9 +652,16 @@ class Repl:
 
 # --- Production input controller (fullscreen prompt_toolkit Application) ------
 
-# Mouse-wheel coalescing divisor: the output window scrolls one real line only
-# every Nth wheel event, so scrolling is slow and controllable.
+# Mouse-wheel coalescing divisor: within a sustained scroll burst the output
+# window scrolls one real line only every Nth wheel event, so a long drag stays
+# slow and controllable. The FIRST event of a burst always moves one line (see
+# _on_scroll_up/_on_scroll_down), so small flicks are never swallowed.
 _SCROLL_DIVISOR = 10
+
+# A scroll burst ends when this many seconds pass without another event in the
+# same direction (or the direction changes). The next event then starts a fresh
+# burst and moves one line immediately.
+_SCROLL_BURST_GAP = 0.3
 
 
 def _render_info_at_bottom(info: Any) -> bool:
@@ -718,6 +725,10 @@ class _PromptController:
         self._up_count: int = 0
         self._down_count: int = 0
         self._last_scroll_dir: str = ""
+        # Monotonic-clock time of the most recent wheel event, used for burst
+        # detection. Injectable so tests can drive burst gaps deterministically.
+        self._clock: Callable[[], float] = time.monotonic
+        self._last_scroll_time: float = 0.0
         # Number of logical lines in the output snapshot the control is currently
         # SERVING (set by _serve_output). The cursor position derives from this
         # exact snapshot -- never a fresh re-materialization at a possibly-changed
@@ -812,30 +823,54 @@ class _PromptController:
 
     # -- Mouse-wheel coalescing + scroll-lock ----------------------------------
 
+    def _starts_burst(self, direction: str, now: float) -> bool:
+        """True when an event in ``direction`` at ``now`` begins a fresh burst.
+
+        A burst breaks on a direction change or when more than
+        ``_SCROLL_BURST_GAP`` seconds elapsed since the previous event. The first
+        event of a burst moves one line immediately; the rest coalesce by divisor.
+        """
+        return (
+            self._last_scroll_dir != direction
+            or (now - self._last_scroll_time) > _SCROLL_BURST_GAP
+        )
+
     def _on_scroll_up(self, do_move: Callable[[], None]) -> None:
-        """Handle one upward wheel event with divisor coalescing + scroll-lock."""
+        """Handle one upward wheel event: burst-aware coalescing + scroll-lock.
+
+        The first event of a burst moves one line immediately; subsequent events
+        in the same burst move only every ``_SCROLL_DIVISOR``th (events 1, 11,
+        21, ...). A small flick therefore always moves at least one line.
+        """
+        now = self._clock()
+        new_burst = self._starts_burst("up", now)
         if self._last_scroll_dir != "up":
-            # Direction change: reset the opposite counter so a later reversal
-            # responds within one divisor's worth of events.
+            # Direction change resets the opposite counter.
             self._down_count = 0
-            self._last_scroll_dir = "up"
-        # Engage scroll-lock unconditionally on the first up-event of a burst.
+        self._last_scroll_dir = "up"
+        self._last_scroll_time = now
+        # Engage scroll-lock unconditionally on any up-event.
         self._user_scrolled = True
-        self._up_count += 1
-        if self._up_count >= _SCROLL_DIVISOR:
-            self._up_count = 0
+        self._up_count = 1 if new_burst else self._up_count + 1
+        if (self._up_count - 1) % _SCROLL_DIVISOR == 0:
             do_move()
 
     def _on_scroll_down(
         self, do_move: Callable[[], None], at_bottom: Callable[[], bool]
     ) -> None:
-        """Handle one downward wheel event; release the lock at the bottom."""
+        """Handle one downward wheel event; release the lock at the bottom.
+
+        Same burst semantics as :meth:`_on_scroll_up`: the first event of a burst
+        moves immediately, the rest coalesce by divisor.
+        """
+        now = self._clock()
+        new_burst = self._starts_burst("down", now)
         if self._last_scroll_dir != "down":
             self._up_count = 0
-            self._last_scroll_dir = "down"
-        self._down_count += 1
-        if self._down_count >= _SCROLL_DIVISOR:
-            self._down_count = 0
+        self._last_scroll_dir = "down"
+        self._last_scroll_time = now
+        self._down_count = 1 if new_burst else self._down_count + 1
+        if (self._down_count - 1) % _SCROLL_DIVISOR == 0:
             do_move()
             # Re-evaluate lock release after each REAL downward movement.
             if at_bottom():
@@ -847,6 +882,7 @@ class _PromptController:
         self._up_count = 0
         self._down_count = 0
         self._last_scroll_dir = ""
+        self._last_scroll_time = 0.0
 
     def _build_app(self):
         from pathlib import Path
