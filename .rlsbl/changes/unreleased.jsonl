@@ -1,4 +1,4 @@
-{"id":"18c1ecdee7e5a00900d70d26ccb44c9b8b757175d98b9b12","commits":["9cbdef5d52b4f152458cdcc43b096f25bc73088f"],"user_facing":true,"description":"**Status bar.** A persistent one-line bottom toolbar shows model, mode, context %, cumulative cost, working spinner, and queued-line count.","type":"feature"}
+{"id":"18c1ecdee7e5a00900d70d26ccb44c9b8b757175d98b9b12","commits":["9cbdef5d52b4f152458cdcc43b096f25bc73088f"],"user_facing":false}
 {"id":"18c1ecdfe4ada50e6e75ceb295184d1082f98ae8d1f9423d","commits":["9cbdef5d52b4f152458cdcc43b096f25bc73088f"],"user_facing":true,"description":"**Fix.** Banner prints immediately at launch instead of waiting for the first turn.","type":"fix"}
 {"id":"8d633d4906fb4ef99313b76ddf5e78cf","commits":["9cbdef5d52b4f152458cdcc43b096f25bc73088f"],"user_facing":true,"description":"**Fix.** Harmless rate-limit lines no longer clutter the transcript.","type":"fix"}
 {"id":"18c1edf429c95aca90e8bc905d0a457a832790bb764ba3bc","commits":["765e381e0f7995fb344b7711a099bfe6c275b526"],"user_facing":true,"description":"**New feature.** Claude-Code-style boxed input with howmuchleft status lines replacing the old status bar.","type":"feature"}
