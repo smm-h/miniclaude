@@ -44,3 +44,4 @@
 {"id":"18c53e7172d3afc2a575c9bb65b9444ba300a062dc07a7ec","commits":["3dc3b201c0e90a5c152f458d236eee7a739d0f7e"],"user_facing":false}
 {"id":"18c53ea77a0d485a2b91380e21314d3ba6cf954d85108d3b","commits":["a7cf0fa68799bb30424c4fb8b905c9d778368775"],"user_facing":false}
 {"id":"18c544fce97a160eb0608a007b3b48169e0dc6ca1d49595a","commits":["6ebc1e033df97d4b47f5d425ed0f690b9cdb5d9a"],"user_facing":true,"description":"**Fixed a crash on terminal resize.** Resizing while output contained re-rendered tables could crash the app with an internal indexing error.","type":"fix"}
+{"id":"18c5453e371e771827cc15e17e334368a81d626d9c26a876","commits":["44737ff4d3f664f6369743baf2562a37fde86d5f"],"user_facing":true,"description":"**Scrolling responds to small flicks.** The first wheel event of a burst always scrolls one line; sustained scrolling remains slowed to one-tenth.","type":"fix"}
