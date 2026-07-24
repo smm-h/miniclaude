@@ -1,9 +1,15 @@
 # Version bump type: patch, minor, major, infra, or prerelease
-bump = ""
+bump = "minor"
 # Short description of this release (required)
-description = ""
+description = "Fullscreen TUI overhaul: bottom-anchored fullscreen interface with slow, controllable mouse-wheel scrolling and scroll-boundary hints, tables with row separators, a live rate-limit status bar, and a seedable mock mode for offline TUI testing."
 # Optional context explaining why these changes were made
-context = ""
+context = """
+The presentation layer moved from inline scrollback rendering to a fullscreen \
+application to fix layout artifacts such as input appearing mid-screen and \
+"Window too small" errors. Wheel scrolling was deliberately slowed to one-tenth \
+of raw wheel speed, with burst responsiveness so the first flick still moves a \
+line. Mock mode was added to exercise the TUI without a live Claude session.
+"""
 # Pre-release identifier: alpha, beta, rc, or stable
 # preid = ""
 # Set to true to generate a blog post for this release
