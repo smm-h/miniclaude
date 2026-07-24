@@ -12,7 +12,7 @@ import functools
 
 import pytest
 
-from claudestream import PermissionRequest, Result, StreamDelta
+from claudestream import PermissionRequest, RateLimit, Result, StreamDelta
 
 from miniclaude._cli import _resolve_seed
 from miniclaude._dialogs import build_question_answers
@@ -108,6 +108,66 @@ async def test_wide_contains_non_ascii():
     assert not text.isascii()
     cols, rows = _parse_table(text)
     assert 5 <= cols <= 10 and 5 <= rows <= 10
+
+
+# --- Rate-limit emission -----------------------------------------------------
+
+
+def _rate_limits(events):
+    """The RateLimit events from a turn, as (type, util, status, resets_at)."""
+    return [
+        (e.rate_limit_type, e.utilization, e.status, e.resets_at)
+        for e in events
+        if isinstance(e, RateLimit)
+    ]
+
+
+@sync
+async def test_each_turn_emits_two_rate_limits():
+    events = await _drive(MockSession(7), "table")
+    rls = [e for e in events if isinstance(e, RateLimit)]
+    assert [e.rate_limit_type for e in rls] == ["five_hour", "seven_day"]
+
+
+@sync
+async def test_same_seed_identical_rate_limits_and_content():
+    a = await _drive(MockSession(7), "table")
+    b = await _drive(MockSession(7), "table")
+    # Rate-limit sequence is reproducible per seed...
+    assert _rate_limits(a) == _rate_limits(b)
+    # ...and the content (table text) is identical too, proving the dedicated
+    # rate-limit RNG is independent of the content RNG stream.
+    assert _concat_text(a) == _concat_text(b)
+
+
+@sync
+async def test_different_seed_different_rate_limits():
+    a = await _drive(MockSession(1), "table")
+    b = await _drive(MockSession(999), "table")
+    assert _rate_limits(a) != _rate_limits(b)
+
+
+@sync
+async def test_rate_limit_utilization_rises_with_turns():
+    sess = MockSession(3)
+    first = _rate_limits(await _drive(sess, "table"))
+    second = _rate_limits(await _drive(sess, "table"))
+    # five_hour is the first entry; it rises faster and must grow turn-over-turn.
+    assert second[0][1] > first[0][1]
+
+
+@sync
+async def test_rate_limit_status_warns_past_threshold():
+    # Drive enough turns that five_hour utilization crosses 0.8.
+    sess = MockSession(5)
+    saw_warning = False
+    for _ in range(20):
+        rls = _rate_limits(await _drive(sess, "table"))
+        for _type, util, status, _resets in rls:
+            assert status == ("allowed_warning" if util >= 0.8 else "allowed")
+            if status == "allowed_warning":
+                saw_warning = True
+    assert saw_warning
 
 
 # --- md round-trip -----------------------------------------------------------

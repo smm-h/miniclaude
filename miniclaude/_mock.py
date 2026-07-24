@@ -35,6 +35,7 @@ from claudestream import (
     ContextCategory,
     ContextUsage,
     PermissionRequest,
+    RateLimit,
     Result,
     StreamDelta,
     SystemInit,
@@ -116,6 +117,22 @@ _MOCK_COMMANDS = [
 # Fabricated context window for the live-mode Result.model_usage entry.
 _MOCK_CONTEXT_WINDOW = 200_000
 
+# Fixed offset that seeds the DEDICATED rate-limit RNG independently of the
+# content RNG, so rate-limit jitter never perturbs generated content.
+_RL_RNG_OFFSET = 0x5A17
+
+# Fixed plausible-future base (year 2027) for seed-derived resets_at values.
+# Fully deterministic -- no wall-clock dependence, so tests reproduce per seed.
+_RL_EPOCH = 1_800_000_000
+
+# Per-rate-limit-type rise parameters: (type, base, per-turn step, reset window).
+# five_hour rises faster than seven_day. reset window bounds the seed-derived
+# offset so five_hour resets sooner than seven_day.
+_RL_SPECS = (
+    ("five_hour", 0.10, 0.06, 18_000),
+    ("seven_day", 0.05, 0.02, 604_800),
+)
+
 
 class MockSession:
     """Fake session implementing the full REPL-facing surface.
@@ -128,6 +145,9 @@ class MockSession:
         self._live = seed is not None
         self._seed = seed if self._live else 0
         self._rng = random.Random(self._seed)
+        # Dedicated RNG for rate-limit jitter -- kept separate from the content
+        # RNG so emitting rate limits never shifts generated content.
+        self._rl_rng = random.Random(self._seed + _RL_RNG_OFFSET)
         self._turns = list(turns or [])
 
         self._first_send = True
@@ -197,7 +217,37 @@ class MockSession:
         arg = parts[1] if len(parts) > 1 else ""
         async for event in self._dispatch(cmd, arg):
             yield event
+        for rl in self._rate_limit_events():
+            yield rl
         yield self._make_result(start)
+
+    def _rate_limit_events(self) -> list:
+        """Two seed-derived RateLimit events emitted before each turn's Result.
+
+        Utilization rises slowly with the turn count (five_hour faster than
+        seven_day) plus small jitter drawn from the DEDICATED rate-limit RNG --
+        never the content RNG -- so a given seed reproduces the same rate-limit
+        sequence AND the same content. resets_at is fully seed+turn derived, so
+        there is no wall-clock dependence. status crosses to "allowed_warning"
+        past 0.8 utilization.
+        """
+        turn = self.turn_count
+        events = []
+        for rate_type, base, step, window in _RL_SPECS:
+            jitter = self._rl_rng.uniform(-0.01, 0.01)
+            util = max(0.0, min(0.99, base + turn * step + jitter))
+            status = "allowed_warning" if util >= 0.8 else "allowed"
+            resets_at = _RL_EPOCH + (self._seed % window) + turn * 300
+            events.append(
+                RateLimit(
+                    type="system",
+                    status=status,
+                    rate_limit_type=rate_type,
+                    utilization=util,
+                    resets_at=resets_at,
+                )
+            )
+        return events
 
     def _dispatch(self, cmd: str, arg: str):
         """Map a mock command word to its event generator (case-sensitive)."""
