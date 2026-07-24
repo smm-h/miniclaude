@@ -1,4 +1,4 @@
-"""Command-line interface entry point for miniclaude, a lean inline terminal client for Claude Code."""
+"""Command-line interface entry point for miniclaude, a lean fullscreen terminal client for Claude Code."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _get_version() -> str:
 app = strictcli.App(
     name="miniclaude",
     version=_get_version(),
-    help="A lean, snappy inline terminal client for Claude Code",
+    help="A lean, snappy fullscreen terminal client for Claude Code",
 )
 
 
@@ -41,7 +41,7 @@ def cmd_version(ctx: Context) -> None:
 # --resume and --continue-session are both optional but mutually exclusive.
 # strictcli's MutexGroup forces "exactly one required", which is wrong here, so
 # the constraint is enforced manually in the handler.
-@app.command("repl", help="Start the interactive inline REPL")
+@app.command("repl", help="Start the interactive fullscreen REPL")
 @strictcli.flag("profile", type=str, help="claudewheel profile to use (required)")
 @strictcli.flag("model", type=str, help="Model to use, e.g. sonnet, haiku (required)")
 @strictcli.flag(
@@ -149,15 +149,15 @@ def cmd_mock(ctx: Context, seed: str = "") -> int | None:
         print(f"error: --seed must be an integer, got {seed!r}", file=sys.stderr)
         return 1
 
-    # Print the seed BEFORE the REPL starts so any rendering bug it surfaces is
-    # reproducible via `miniclaude mock --seed <n>`.
-    print(f"mock seed: {seed_int}")
-
     def _printer(text: str) -> None:
         if text:
             sys.stdout.write(text)
 
     width = shutil.get_terminal_size((80, 24)).columns
+    # The seed is emitted as the REPL's intro (first output block) so it is
+    # visible inside the fullscreen app -- a pre-run print() would be swallowed
+    # by the alternate screen. It stays reproducible via `miniclaude mock
+    # --seed <n>`.
     repl = Repl(
         session_factory=lambda: MockSession(seed_int),
         interaction=PromptToolkitInteraction(),
@@ -165,6 +165,7 @@ def cmd_mock(ctx: Context, seed: str = "") -> int | None:
         width=width,
         model="claude-mock",
         permission_mode="default",
+        intro=f"mock seed: {seed_int}",
     )
     asyncio.run(repl.run())
     return None

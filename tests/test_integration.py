@@ -2,15 +2,16 @@
 
 Spawns the real CLI (`miniclaude repl`) inside a pseudo-terminal so
 prompt_toolkit has a genuine TTY, drives one turn against a live model, and
-verifies the response renders in the inline Application's output region.
+verifies the response renders in the fullscreen Application's output region.
 Marked ``integration`` so the default unit run (`pytest -m "not integration"`)
 skips it.
 
-The REPL uses inline mode (no alternate screen). Output flows through
-patch_stdout into native terminal scrollback. The spawn / pty-size /
-CPR-answering / read-until / graceful-quit / teardown mechanics all live in the
-reusable :class:`tests._pty_harness.PtySession`; this test only expresses the
-scenario on top of it.
+The REPL runs fullscreen (alternate screen): output is modelled as blocks and
+materialized into the scrollable output window, with no terminal-native
+scrollback. The spawn / pty-size / CPR-answering / read-until / graceful-quit /
+teardown mechanics all live in the reusable
+:class:`tests._pty_harness.PtySession`; this test only expresses the scenario on
+top of it.
 
 Requires a working claudewheel profile ("personal") and network access. On a
 sandboxed/offline machine this test will fail at the model turn -- that is a

@@ -7,30 +7,34 @@ The design splits cleanly into pure orchestration (unit-testable with a
   ``(session_factory, interaction, printer)`` so tests inject fakes. Event
   dispatch, slash-command parsing, the interrupt guard, and the result/status
   lines are all driven through those injected surfaces -- no terminal required.
-- :class:`_PromptController` is the production input surface: an inline
-  prompt_toolkit ``Application`` with a two-region layout (boxed input,
-  howmuchleft status bar). Output flows through ``patch_stdout(raw=True)``
-  into native terminal scrollback above the managed area. User input arrives
-  via the ``Buffer``'s ``accept_handler``. Modals (permission prompts,
-  AskUserQuestion) use ``in_terminal`` to suspend the inline app, run the
-  existing _dialogs.py code unchanged, and return.
+- :class:`_PromptController` is the production input surface: a fullscreen
+  prompt_toolkit ``Application`` (alternate screen) with a three-region
+  layout (scrollable output, boxed input, howmuchleft status bar). Output is
+  modelled as a list of :class:`OutputBlock`s (pre-rendered prose and
+  structured tables); the output window's content callback materializes those
+  blocks to ANSI at the live terminal width every render, so a resize simply
+  re-materializes tables at the new width -- there is no SIGWINCH handler.
+  User input arrives via the ``Buffer``'s ``accept_handler``. Modals
+  (permission prompts, AskUserQuestion) use ``in_terminal`` to suspend the
+  fullscreen app, run the existing _dialogs.py code unchanged, and return.
 
 Layout:
   HSplit [
+    Window(FormattedTextControl)   # scrollable output (weight=1)
     Frame(Window(BufferControl))   # boxed input (dynamic, 1..10 lines)
     Window(FormattedTextControl)   # howmuchleft (height=3)
   ]
 
-The Application uses ``full_screen=False`` (inline mode -- output goes to
-native terminal scrollback) and ``color_depth=DEPTH_24_BIT`` (truecolor
-lossless -- no quantization of howmuchleft's RGB escapes).
+The Application uses ``full_screen=True`` (alternate screen -- output scrolls
+in-app with the mouse wheel, no terminal-native scrollback) and
+``color_depth=DEPTH_24_BIT`` (truecolor lossless -- no quantization of
+howmuchleft's RGB escapes).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -94,8 +98,9 @@ def materialize_blocks(blocks: list[OutputBlock], width: int) -> str:
     """Render a list of output blocks into a single ANSI string.
 
     ProseBlocks contribute their pre-rendered ansi_text as-is. TableBlocks are
-    rendered at the given width via render_table. Used by the SIGWINCH repaint
-    (Phase 3) to reprint the visible area at the new terminal width.
+    rendered at the given width via render_table. This is the materialization
+    path behind the output window's content callback: it runs at the live
+    terminal width every render, so tables re-flow automatically on resize.
     """
     parts: list[str] = []
     for block in blocks:
@@ -276,11 +281,13 @@ class Repl:
         width: int = 80,
         model: str = "",
         permission_mode: str = "",
+        intro: str = "",
     ) -> None:
         self._session_factory = session_factory
         self._interaction = interaction
         self._printer = printer
         self._width = width
+        self._intro = intro
 
         self._queue: asyncio.Queue = asyncio.Queue()
         self._session: Any = None
@@ -365,34 +372,26 @@ class Repl:
             await asyncio.sleep(0.25)
 
     async def run(self) -> None:
-        """Production run: inline Application with input/status regions."""
-        # Erase scrollback + visible screen: wipe saved lines, home
-        # cursor, then erase from cursor to end of screen.  Prior terminal
-        # content (shell prompts, launcher output) is genuinely erased
-        # rather than pushed into scrollback.
-        sys.stdout.write("\x1b[3J\x1b[H\x1b[J")
-        sys.stdout.flush()
-        # Push the cursor near the bottom of the terminal so that
-        # prompt_toolkit's _min_available_height is ~16, causing the
-        # managed area (input + howmuchleft) to render at the bottom
-        # instead of the top.
-        rows = shutil.get_terminal_size().lines
-        sys.stdout.write("\n" * max(0, rows - 16))
-        sys.stdout.flush()
+        """Production run: fullscreen Application with output/input/status regions."""
         async with self._session_factory() as session:
             self._session = session
             self._input = _PromptController(self)
-            # Redirect the printer to the patch_stdout pathway for the
-            # duration of the inline app. The original printer is restored
-            # afterward so the cost summary prints without ProseBlock tracking.
+            # Route the printer into the output-block model for the duration of
+            # the fullscreen app. The original printer is restored afterward so
+            # the post-exit cost summary prints to the normal terminal.
             orig_printer = self._printer
             self._printer = self._input.printer
+            # Emit the intro as the first output block, now that the controller
+            # is wired. The alternate screen would swallow anything printed
+            # before this point.
+            if self._intro:
+                self._printer(_dim(self._intro) + "\n")
             try:
                 await self._input.run(self._main_loop, session)
             finally:
                 self._exit = True
                 self._printer = orig_printer
-            # Print cost summary after the inline app exits.
+            # Print cost summary after the fullscreen app exits.
             sys.stdout.write(self._format_cost(session))
 
     # --- Core loop ---
@@ -413,14 +412,14 @@ class Repl:
         refresh_task: asyncio.Task | None = None
         if self._input:
             refresh_task = asyncio.ensure_future(self._refresh_loop())
-            # Wire the on_table callback so tables create TableBlocks (not
-            # ProseBlocks) and render through _raw_write.
+            # Wire the on_table callback so tables become TableBlocks. The
+            # output window materializes them at the live width every render,
+            # so no explicit rendering happens here.
             ctrl = self._input
 
             def _on_table(data: TableData) -> None:
                 ctrl._output_blocks.append(TableBlock(data))
-                rendered = render_table(data, self._width)
-                ctrl._raw_write(rendered)
+                self._invalidate()
 
             self._renderer.on_table = _on_table
         # Echo the user's input into scrollback
@@ -651,37 +650,97 @@ class Repl:
         )
 
 
-# --- Production input controller (inline prompt_toolkit Application) ----------
+# --- Production input controller (fullscreen prompt_toolkit Application) ------
 
 
 class _PromptController:
-    """Inline Application with input/status regions.
+    """Fullscreen Application with output/input/status regions.
 
-    The layout is an HSplit of two regions: a boxed input area (Frame around
-    BufferControl, bounded height) and a howmuchleft status bar (fixed
-    height=3). Output flows through ``patch_stdout(raw=True)`` into native
-    terminal scrollback above the managed area.
+    The layout is an HSplit of three regions: a scrollable output window (top,
+    weight=1), a boxed input area (Frame around BufferControl, height 1..10),
+    and a howmuchleft status bar (fixed height=3).
 
-    The Application runs with ``full_screen=False`` (inline mode) and
-    ``color_depth=DEPTH_24_BIT`` (truecolor, no quantization).
+    Output is a list of :class:`OutputBlock`s. The output window's content
+    callback materializes them to ANSI at the *live* terminal width every
+    render (memoized incrementally; full recompute only on width change), so a
+    resize automatically re-flows tables -- there is no SIGWINCH handler.
 
-    Submitted lines flow into ``repl._queue``. Modals use ``in_terminal``
-    to suspend the inline app and run the existing _dialogs.py widgets.
+    The Application runs with ``full_screen=True`` (alternate screen),
+    ``mouse_support=True``, and ``color_depth=DEPTH_24_BIT`` (truecolor, no
+    quantization). Submitted lines flow into ``repl._queue``. Modals use
+    ``in_terminal`` to suspend the app and run the existing _dialogs.py widgets.
     """
-
-    # Managed area height: frame borders (2) + max input (10) + howmuchleft (3)
-    # + margin (1) = 16 lines. prompt_toolkit re-renders this below the
-    # reprinted content.
-    _MANAGED_AREA_HEIGHT = 16
 
     def __init__(self, repl: Repl) -> None:
         self._repl = repl
         self._app: Any | None = None
-        # Structured output block list for resize-aware reprinting (Phase 3).
+        # Structured output blocks -- the single source of truth for the
+        # scrollable output region.
         self._output_blocks: list[OutputBlock] = []
-        # SIGWINCH repaint debounce state.
-        self._last_repaint_time: float = 0.0
-        self._pending_repaint: asyncio.TimerHandle | None = None
+        # Incremental materialization memo.
+        self._memo_text: str = ""
+        self._memo_count: int = 0
+        self._memo_width: int = -1
+        self._last_materialized_text: str = ""
+        # Number of blocks materialize_blocks was called with on the last
+        # _materialize() (exposed for tests of the incremental memo).
+        self._last_render_block_count: int = 0
+        # Auto-follow: when False the output window tracks the tail; set True
+        # while the user has scrolled up (scroll-lock, added in a later phase).
+        self._user_scrolled: bool = False
+
+    # -- Output materialization (block-backed, width-live, memoized) -----------
+
+    def _current_width(self) -> int:
+        """The live terminal width, read from the running app when available."""
+        if self._app is not None:
+            try:
+                cols = self._app.output.get_size().columns
+                if cols > 0:
+                    return cols
+            except Exception:  # noqa: BLE001
+                pass
+        return self._repl._width
+
+    def _materialize(self, width: int) -> str:
+        """Materialize the output blocks to ANSI at ``width``, incrementally.
+
+        Blocks are baked into ``_memo_text`` once they are "sealed" (every
+        block except a trailing ProseBlock, which the printer may still coalesce
+        into). Only newly-sealed blocks are rendered on each same-width call;
+        the unsealed trailing prose block is rendered fresh (cheap, single
+        block). A width change forces a full recompute.
+        """
+        blocks = self._output_blocks
+        n = len(blocks)
+        if width != self._memo_width:
+            self._memo_width = width
+            self._memo_text = ""
+            self._memo_count = 0
+        sealed = n
+        if n > 0 and isinstance(blocks[-1], ProseBlock):
+            sealed = n - 1
+        rendered = 0
+        if self._memo_count < sealed:
+            self._memo_text += materialize_blocks(blocks[self._memo_count:sealed], width)
+            rendered += sealed - self._memo_count
+            self._memo_count = sealed
+        if sealed < n:
+            tail = materialize_blocks(blocks[sealed:], width)
+            rendered += n - sealed
+        else:
+            tail = ""
+        self._last_render_block_count = rendered
+        self._last_materialized_text = self._memo_text + tail
+        return self._last_materialized_text
+
+    def _content_line_count(self) -> int:
+        """Logical (newline) line count of the materialized output."""
+        return self._materialize(self._current_width()).count("\n")
+
+    def _cursor_y(self, tail_line: int, vertical_scroll: int) -> int:
+        """Cursor row for the output window: tail when following, else pinned."""
+        return vertical_scroll if self._user_scrolled else tail_line
 
     def _build_app(self):
         from pathlib import Path
@@ -689,6 +748,7 @@ class _PromptController:
         from prompt_toolkit.application import Application
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
         from prompt_toolkit.buffer import Buffer
+        from prompt_toolkit.data_structures import Point
         from prompt_toolkit.formatted_text import ANSI
         from prompt_toolkit.history import FileHistory, ThreadedHistory
         from prompt_toolkit.key_binding import KeyBindings
@@ -698,6 +758,7 @@ class _PromptController:
             FormattedTextControl,
             HSplit,
             Layout,
+            ScrollOffsets,
             Window,
         )
         from prompt_toolkit.output.color_depth import ColorDepth
@@ -707,11 +768,39 @@ class _PromptController:
         history_dir.mkdir(parents=True, exist_ok=True)
         history = ThreadedHistory(FileHistory(str(history_dir / "history")))
 
-        # --- Input region (boxed) ---
+        # --- Output region (scrollable, top) ---
+        def _get_output_text():
+            width = self._current_width()
+            # Keep the Repl/renderer width in sync so new prose wraps correctly
+            # after a resize -- no SIGWINCH handler needed.
+            if width != self._repl._width:
+                self._repl._width = width
+                self._repl._renderer.width = width
+            return ANSI(self._materialize(width))
+
+        def _get_cursor_position() -> Point:
+            tail_line = self._content_line_count()
+            return Point(x=0, y=self._cursor_y(tail_line, output_window.vertical_scroll))
+
+        output_control = FormattedTextControl(
+            text=_get_output_text,
+            show_cursor=False,
+            get_cursor_position=_get_cursor_position,
+        )
+        output_window = Window(
+            content=output_control,
+            wrap_lines=True,
+            scroll_offsets=ScrollOffsets(bottom=0),
+            allow_scroll_beyond_bottom=True,
+        )
+
+        # --- Input region (boxed, bottom) ---
         def _accept(buf: Buffer) -> bool:
             text = buf.text
             if not text.strip():
                 return False
+            # Submitting input re-engages auto-follow.
+            self._user_scrolled = False
             if self._repl.turn_active:
                 self._repl.notice_queued(text)
             self._repl._queue.put_nowait(text)
@@ -739,11 +828,7 @@ class _PromptController:
             return ANSI(self._repl._get_toolbar())
 
         hml_control = FormattedTextControl(text=_get_hml_text)
-        hml_window = Window(
-            content=hml_control,
-            height=3,
-            dont_extend_height=True,
-        )
+        hml_window = Window(content=hml_control, height=3)
 
         # --- Key bindings ---
         kb = KeyBindings()
@@ -775,20 +860,18 @@ class _PromptController:
                 event.app.exit()
 
         # --- Layout ---
-        # Bounded height prevents _min_available_height from inflating the
-        # layout and creating dead space below the managed area.
-        root = HSplit(
-            [framed_input, hml_window],
-            height=Dimension(max=16),
-        )
+        root = HSplit([output_window, framed_input, hml_window])
         layout = Layout(root, focused_element=input_buffer)
 
         app: Application = Application(
             layout=layout,
             key_bindings=kb,
-            full_screen=False,
+            full_screen=True,
+            mouse_support=True,
             color_depth=ColorDepth.DEPTH_24_BIT,
-            # Refresh at ~4Hz so howmuchleft updates during turns.
+            # Refresh at ~4Hz so howmuchleft updates during turns and the
+            # output window picks up new printer() content without explicit
+            # invalidate() calls.
             refresh_interval=0.25,
         )
         # Snappy lone-Esc resolution (default is 0.5s).
@@ -796,133 +879,18 @@ class _PromptController:
         return app
 
     def printer(self, text: str) -> None:
-        """Write prose text to scrollback via patch_stdout and record a ProseBlock."""
-        if text:
-            self._raw_write(text)
-            self._output_blocks.append(ProseBlock(text))
+        """Append prose text to the output blocks (called as the Repl's printer).
 
-    def _raw_write(self, text: str) -> None:
-        """Write text to the display via sys.stdout (routed through patch_stdout).
-
-        Used directly by the on_table callback to write rendered table text.
-        The caller is responsible for appending the appropriate block to
-        _output_blocks separately.
+        Consecutive prose appends coalesce into the tail ProseBlock so that
+        thousands of small streamed chunks do not become thousands of blocks.
         """
-        if text:
-            sys.stdout.write(text)
-
-    def _terminal_write(self, text: str) -> None:
-        """Direct terminal write bypassing patch_stdout's StdoutProxy.
-
-        Uses app.output.write_raw() + output.flush(). Used ONLY inside
-        in_terminal blocks (Phase 3 SIGWINCH reprint). patch_stdout's
-        StdoutProxy defers sys.stdout.write calls during in_terminal -- the
-        deferred writes execute only after in_terminal exits. This method
-        bypasses that deferral entirely.
-        """
-        if self._app and text:
-            self._app.output.write_raw(text)
-            self._app.output.flush()
-
-    # -- SIGWINCH resize handling (Phase 3) ------------------------------------
-
-    def _on_sigwinch(self) -> None:
-        """Called from the event loop when SIGWINCH fires.
-
-        Updates width on the Repl and the active StreamRenderer, then
-        schedules a debounced visible-area repaint.
-        """
-        if not self._app:
+        if not text:
             return
-        new_size = self._app.output.get_size()
-        new_width = new_size.columns
-        if new_width == self._repl._width:
-            return
-        # Propagate width to Repl and the active StreamRenderer.
-        self._repl._width = new_width
-        self._repl._renderer.width = new_width
-        # Debounce: skip if last repaint was < 100ms ago, schedule for later.
-        now = time.monotonic()
-        elapsed = now - self._last_repaint_time
-        if self._pending_repaint is not None:
-            self._pending_repaint.cancel()
-            self._pending_repaint = None
-        if elapsed < 0.1:
-            delay = 0.1 - elapsed
-            loop = asyncio.get_event_loop()
-            self._pending_repaint = loop.call_later(
-                delay, lambda: asyncio.ensure_future(self._do_repaint(new_width))
-            )
+        blocks = self._output_blocks
+        if blocks and isinstance(blocks[-1], ProseBlock):
+            blocks[-1] = ProseBlock(blocks[-1].ansi_text + text)
         else:
-            asyncio.ensure_future(self._do_repaint(new_width))
-
-    async def _do_repaint(self, new_width: int) -> None:
-        """Repaint the visible area at the new terminal width.
-
-        Suspends the inline Application via in_terminal, clears the screen,
-        reprints the last screenful of output blocks, then resumes. All writes
-        use _terminal_write to bypass patch_stdout's StdoutProxy deferral.
-        """
-        from prompt_toolkit.application import in_terminal
-
-        if not self._app or not self._app.is_running:
-            return
-        self._last_repaint_time = time.monotonic()
-        self._pending_repaint = None
-        # Get terminal height for the reprint budget.
-        term_height = self._app.output.get_size().rows
-        budget = max(1, term_height - self._MANAGED_AREA_HEIGHT)
-
-        async with in_terminal():
-            try:
-                # Synchronized output start (batch into single frame).
-                self._terminal_write("\x1b[?2026h")
-                # Erase scrollback + visible area: wipe saved lines, home
-                # cursor, then erase from cursor to end of screen.  This
-                # prevents old content from lingering in scrollback on resize.
-                self._terminal_write("\x1b[3J\x1b[H\x1b[J")
-                # Walk blocks backwards to find the last screenful.
-                block_indices: list[int] = []
-                lines_used = 0
-                for i in range(len(self._output_blocks) - 1, -1, -1):
-                    block = self._output_blocks[i]
-                    if isinstance(block, ProseBlock):
-                        # Approximate physical line count at new width.
-                        block_lines = 0
-                        for line in block.ansi_text.split("\n"):
-                            block_lines += max(1, math.ceil(len(line) / new_width)) if line else 1
-                        # The final empty string from trailing \n should not add a line.
-                        if block.ansi_text.endswith("\n"):
-                            block_lines -= 1
-                        block_lines = max(block_lines, 0)
-                    elif isinstance(block, TableBlock):
-                        rendered = render_table(block.data, new_width)
-                        block_lines = rendered.count("\n")
-                    else:
-                        continue
-                    if lines_used + block_lines > budget and block_indices:
-                        break
-                    block_indices.append(i)
-                    lines_used += block_lines
-                    if lines_used >= budget:
-                        break
-                # Reprint in forward order.
-                block_indices.reverse()
-                for i in block_indices:
-                    block = self._output_blocks[i]
-                    if isinstance(block, ProseBlock):
-                        self._terminal_write(block.ansi_text)
-                    elif isinstance(block, TableBlock):
-                        self._terminal_write(render_table(block.data, new_width))
-                # Push cursor near bottom so prompt_toolkit redraws
-                # the managed area at the bottom of the terminal.
-                remaining = max(0, term_height - 16 - lines_used)
-                if remaining > 0:
-                    self._terminal_write("\n" * remaining)
-                # Synchronized output end.
-                self._terminal_write("\x1b[?2026l")
-            except Exception as exc:
-                self._terminal_write("\x1b[2m[resize error: " + str(exc) + "]\x1b[0m\n")
+            blocks.append(ProseBlock(text))
 
     async def run(
         self,
@@ -930,23 +898,8 @@ class _PromptController:
         session: Any,
     ) -> None:
         """Build the Application, run the main loop as a background task, and
-        run the app under patch_stdout. When either finishes (exit or
-        EOFError), clean up."""
-        from prompt_toolkit.patch_stdout import patch_stdout
-
+        run the app. When either finishes (exit or EOFError), clean up."""
         self._app = self._build_app()
-
-        # Chain our SIGWINCH handler into the Application's _on_resize.
-        # prompt_toolkit registers app._on_resize as the SIGWINCH handler
-        # inside run_async. By replacing it with a wrapper, we get called
-        # on every resize without fighting the signal handler registration.
-        _original_on_resize = self._app._on_resize
-
-        def _chained_on_resize() -> None:
-            _original_on_resize()
-            self._on_sigwinch()
-
-        self._app._on_resize = _chained_on_resize
 
         async def _loop_wrapper() -> None:
             try:
@@ -959,8 +912,7 @@ class _PromptController:
         loop_task = asyncio.ensure_future(_loop_wrapper())
 
         try:
-            with patch_stdout(raw=True):
-                await self._app.run_async()
+            await self._app.run_async()
         except EOFError:
             self._repl.request_exit()
         finally:
@@ -972,7 +924,7 @@ class _PromptController:
                 pass
 
     async def run_modal(self, coro: Awaitable[Any]) -> Any:
-        """Suspend the inline app, run the modal coroutine, then resume.
+        """Briefly exit fullscreen, run the modal coroutine, return to fullscreen.
 
         Uses ``in_terminal`` which suspends the Application's rendering,
         restores the normal terminal, runs the modal (which may create its own

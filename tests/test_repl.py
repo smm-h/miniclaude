@@ -867,9 +867,99 @@ def test_render_table_width_independence():
         assert "Score" in full
 
 
-def test_terminal_write_method_exists():
-    """_PromptController has a _terminal_write method (replaces scroll-lock
-    tests -- scroll is native now, but direct terminal write is still needed
-    for SIGWINCH repaint inside in_terminal blocks)."""
-    assert hasattr(_PromptController, "_terminal_write")
-    assert callable(getattr(_PromptController, "_terminal_write"))
+# --- Phase 3: block-backed output path (3.1) ---------------------------------
+
+
+def _mk_controller():
+    """A _PromptController bound to a minimal Repl (no app, no terminal)."""
+    fake = FakeSession(turns=[])
+    repl, _ = make_repl(fake)
+    return _PromptController(repl)
+
+
+def _table_data():
+    return TableData(
+        header_rows=[["Name", "Description"]],
+        body_rows=[["Alice", "A moderately long description that will wrap around"]],
+        aligns=["left", "left"],
+    )
+
+
+def test_printer_coalesces_consecutive_prose():
+    """Consecutive prose appends merge into the tail ProseBlock, bounding block
+    count during streaming; a TableBlock breaks the run."""
+    ctrl = _mk_controller()
+    for _ in range(1000):
+        ctrl.printer("x")
+    assert len(ctrl._output_blocks) == 1
+    assert isinstance(ctrl._output_blocks[0], ProseBlock)
+    assert ctrl._output_blocks[0].ansi_text == "x" * 1000
+
+    # A table appended mid-stream starts a fresh prose run afterward.
+    ctrl._output_blocks.append(TableBlock(_table_data()))
+    ctrl.printer("a")
+    ctrl.printer("b")
+    assert len(ctrl._output_blocks) == 3
+    assert isinstance(ctrl._output_blocks[0], ProseBlock)
+    assert isinstance(ctrl._output_blocks[1], TableBlock)
+    assert isinstance(ctrl._output_blocks[2], ProseBlock)
+    assert ctrl._output_blocks[2].ansi_text == "ab"
+
+
+def test_printer_ignores_empty_text():
+    ctrl = _mk_controller()
+    ctrl.printer("")
+    assert ctrl._output_blocks == []
+
+
+def test_materialize_memo_incremental_and_width_recompute():
+    """The memo renders only newly-sealed blocks at the same width, renders a
+    trailing prose block fresh each call, and fully recomputes on width change.
+    """
+    ctrl = _mk_controller()
+    d = _table_data()
+    # Tail is a table => every block is "sealed" and baked.
+    ctrl._output_blocks = [
+        ProseBlock("a\n"),
+        TableBlock(d),
+        ProseBlock("b\n"),
+        TableBlock(d),
+    ]
+    m1 = ctrl._materialize(80)
+    assert ctrl._last_render_block_count == 4  # first call renders all four
+
+    # Append a trailing prose block: it is NOT sealed (printer may coalesce),
+    # so it renders fresh but nothing new is baked.
+    ctrl._output_blocks.append(ProseBlock("c\n"))
+    m2 = ctrl._materialize(80)
+    assert ctrl._last_render_block_count == 1  # only the fresh tail
+    assert m2 == m1 + "c\n"
+
+    # Append a table: the "c\n" prose now seals, and the table seals too.
+    ctrl._output_blocks.append(TableBlock(d))
+    m3 = ctrl._materialize(80)
+    assert ctrl._last_render_block_count == 2  # the two newly-sealed blocks
+    assert m3.startswith(m2)
+
+    # A width change forces a full recompute of every block.
+    ctrl._materialize(40)
+    assert ctrl._last_render_block_count == 6
+
+
+def test_materialize_correct_at_multiple_widths():
+    """Materialization matches materialize_blocks at several widths, and tables
+    re-flow so the output differs by width."""
+    ctrl = _mk_controller()
+    d = _table_data()
+    ctrl._output_blocks = [ProseBlock("prose\n"), TableBlock(d)]
+    for w in (40, 80, 120, 200):
+        assert ctrl._materialize(w) == materialize_blocks(ctrl._output_blocks, w)
+    assert ctrl._materialize(40) != ctrl._materialize(200)
+
+
+def test_content_line_count_matches_materialized_newlines():
+    ctrl = _mk_controller()
+    ctrl._output_blocks = [ProseBlock("one\ntwo\nthree\n")]
+    # _current_width falls back to repl width (80) when no app is running.
+    expected = ctrl._materialize(80).count("\n")
+    assert ctrl._content_line_count() == expected == 3
