@@ -19,6 +19,5 @@
   },
   "publish_mode": "ci",
   "push_timeout": 120,
-  "check_timeout": 420,
-  "coverage_unit": "commit"
+  "check_timeout": 420
 }
