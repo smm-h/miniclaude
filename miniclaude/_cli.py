@@ -33,7 +33,8 @@ app = strictcli.App(
 )
 
 
-@app.command("version", help="Print the miniclaude version")
+# read_only: reads the version string that was resolved at import and prints it.
+@app.command("version", effect="read_only", help="Print the miniclaude version")
 def cmd_version(ctx: Context) -> None:
     print(__version__)
 
@@ -41,7 +42,10 @@ def cmd_version(ctx: Context) -> None:
 # --resume and --continue-session are both optional but mutually exclusive.
 # strictcli's MutexGroup forces "exactly one required", which is wrong here, so
 # the constraint is enforced manually in the handler.
-@app.command("repl", help="Start the interactive fullscreen REPL")
+# mutating: spawns a real Claude Code subprocess, which reads and writes files
+# under --cwd, runs shell commands, calls the network, spends money and
+# persists a session transcript. It also appends to ~/.miniclaude/history.
+@app.command("repl", effect="mutating", help="Start the interactive fullscreen REPL")
 @strictcli.flag("profile", type=str, help="claudewheel profile to use (required)")
 @strictcli.flag("model", type=str, help="Model to use, e.g. sonnet, haiku (required)")
 @strictcli.flag(
@@ -128,8 +132,13 @@ def _resolve_seed(seed: str) -> int:
     return random.SystemRandom().randrange(2**31)
 
 
+# mutating: the session is fake -- no Claude, no network, no spend -- but the
+# REPL it drives is the real one, and the real one creates ~/.miniclaude/ and
+# appends every prompt typed into it to ~/.miniclaude/history. A persistent
+# write outside the working directory is a mutation whatever produced it.
 @app.command(
     "mock",
+    effect="mutating",
     help="Interactive REPL against a mock session for TUI testing — no Claude CLI needed.",
 )
 @strictcli.flag(
