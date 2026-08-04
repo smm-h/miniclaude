@@ -70,13 +70,23 @@ RESERVED_FLAG_NAMES = {
 }
 
 
+def _registry(container: Any) -> dict[str, Any]:
+    """App stores commands on `_commands`, Group on `commands`.
+
+    Written as an explicit None test rather than `or`, because an app whose
+    commands all live in groups has an EMPTY `_commands` dict, and `or` would
+    fall through it to an attribute App does not have.
+    """
+    found = getattr(container, "_commands", None)
+    return container.commands if found is None else found
+
+
 def _walk() -> dict[str, Any]:
     """Map dotted command path -> Command for every registered command."""
     found: dict[str, Any] = {}
 
     def visit(container: Any, prefix: str) -> None:
-        registry = getattr(container, "_commands", None) or container.commands
-        for name, cmd in registry.items():
+        for name, cmd in _registry(container).items():
             found[prefix + name] = cmd
         for name, group in container._groups.items():
             visit(group, prefix + name + ".")
