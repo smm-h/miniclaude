@@ -2,11 +2,18 @@
 format_version = 1
 # Version bump type: patch, minor, major, infra, or prerelease
 #   prerelease: advance an existing pre-release (0.6.0-beta.0 -> -beta.1)
-bump = ""
+bump = "patch"
 # Short description of this release (required)
-description = ""
+description = "Fixes broken installs of 0.2.0 under strictcli 0.36.0 (mandatory effect classification)."
 # Optional context explaining why these changes were made
-context = ""
+context = """
+strictcli 0.36.0 made effect classification mandatory at command
+registration. miniclaude 0.2.0 shipped with a bare `strictcli`
+dependency, so fresh installs resolved 0.36.0 and hard-errored at
+registration before the CLI could start. This release ships the
+classification fix for all three commands and adds a `>=0.36.0` floor
+so the dependency can never resolve below the version the fix needs.
+"""
 # Pre-release channel: alpha, beta, rc, or stable (ordered;
 # demotion is an error). With patch/minor/major it ENTERS the
 # channel (0.5.2 + minor + alpha -> 0.6.0-alpha.0); with
