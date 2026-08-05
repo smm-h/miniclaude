@@ -2,3 +2,4 @@
 {"format_version":1,"id":"18c645e495fcaa613c8b4d97b60a4f1d8a82a7b23125dbc9","commits":["689a304ac8d2c858973df24b67a3a409f21449ed"],"user_facing":false}
 {"format_version":1,"id":"18c8bef49de2812e5bf269341899453788286880edae5ae7","commits":["c95362ce830d0921be35fc61df7c1295edb34a96"],"user_facing":true,"description":"**The `miniclaude` CLI works again on strictcli 0.36.0.** The framework now requires every command to declare whether it changes anything; all three now do.","type":"fix"}
 {"format_version":1,"id":"18c8bf46ca0a55084570cfcd85564003b61bc42b21138449","commits":["4837827b10fcf3aad70bd9c75626dbd2304f89fd"],"user_facing":false}
+{"format_version":1,"id":"18c8e4d54b287b7c93de57695d43451996e89ef154bf83a2","commits":["7b615bef5c1149280491f916a33610cb484e624d"],"user_facing":false}
