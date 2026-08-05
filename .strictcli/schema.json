@@ -48,16 +48,18 @@
   },
   "project_id": "miniclaude",
   "name": "miniclaude",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "help": "A lean, snappy fullscreen terminal client for Claude Code",
   "commands": {
     "version": {
       "name": "version",
-      "help": "Print the miniclaude version"
+      "help": "Print the miniclaude version",
+      "effect": "read_only"
     },
     "repl": {
       "name": "repl",
       "help": "Start the interactive fullscreen REPL",
+      "effect": "mutating",
       "flags": [
         {
           "name": "profile",
@@ -106,6 +108,7 @@
     "mock": {
       "name": "mock",
       "help": "Interactive REPL against a mock session for TUI testing \u2014 no Claude CLI needed.",
+      "effect": "mutating",
       "flags": [
         {
           "name": "seed",

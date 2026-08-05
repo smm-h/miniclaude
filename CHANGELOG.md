@@ -2,6 +2,26 @@
 
 # Changelog
 
+## 0.2.1
+
+Fixes broken installs of 0.2.0 under strictcli 0.36.0 (mandatory effect classification).
+
+<details>
+<summary>Context</summary>
+
+strictcli 0.36.0 made effect classification mandatory at command
+registration. miniclaude 0.2.0 shipped with a bare `strictcli`
+dependency, so fresh installs resolved 0.36.0 and hard-errored at
+registration before the CLI could start. This release ships the
+classification fix for all three commands and adds a `>=0.36.0` floor
+so the dependency can never resolve below the version the fix needs.
+
+</details>
+
+### Fixes
+
+- **The `miniclaude` CLI works again on strictcli 0.36.0.** The framework now requires every command to declare whether it changes anything; all three now do.
+
 ## 0.2.0
 
 Fullscreen TUI overhaul: bottom-anchored fullscreen interface with slow, controllable mouse-wheel scrolling and scroll-boundary hints, tables with row separators, a live rate-limit status bar, and a seedable mock mode for offline TUI testing.

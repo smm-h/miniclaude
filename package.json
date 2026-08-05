@@ -1,6 +1,6 @@
 {
   "name": "miniclaude",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A lean, snappy fullscreen terminal client for Claude Code - CLI wrapper for the Python miniclaude package",
   "bin": {
     "miniclaude": "./bin/miniclaude.mjs"
