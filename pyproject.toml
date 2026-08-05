@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "claudestream",
-    "strictcli",
+    "strictcli>=0.36.0",
     "prompt-toolkit",
 ]
 keywords = ["rlsbl"]
