@@ -73,7 +73,7 @@ dev = [
 requires-dist = [
     { name = "claudestream" },
     { name = "prompt-toolkit" },
-    { name = "strictcli", specifier = ">=0.41.0" },
+    { name = "strictcli", specifier = ">=0.41.1" },
 ]
 
 [package.metadata.requires-dev]
