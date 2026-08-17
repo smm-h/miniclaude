@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 
@@ -34,7 +35,8 @@ def _missing_real_cli_prereqs(profile: str) -> str | None:
     checkouts):
 
     - the ``claude`` binary on PATH,
-    - a resolvable claudewheel profile with usable launch env, and
+    - a resolvable claudewheel profile whose launch env can actually
+      authenticate a session, and
     - the ability to allocate a pseudo-terminal (pty).
 
     claudewheel's ``resolve_profile`` raises (``ValueError`` for an unknown
@@ -52,7 +54,40 @@ def _missing_real_cli_prereqs(profile: str) -> str | None:
         return f"claudewheel profile {profile!r} unavailable: {exc}"
     if not env:
         return f"claudewheel profile {profile!r} resolved to empty env"
+    credential_reason = _missing_claude_credentials(profile, env)
+    if credential_reason:
+        return credential_reason
     return _pty_unavailable_reason()
+
+
+def _missing_claude_credentials(profile: str, env: dict[str, str]) -> str | None:
+    """Return a skip reason when the resolved profile cannot log a session in.
+
+    A profile that resolves cleanly can still be signed out: the config
+    directory exists and ``resolve_profile`` hands back its path, but the
+    credentials file carries no ``claudeAiOauth`` block. The spawned CLI then
+    starts, renders, and answers the first prompt with ``Not logged in ·
+    Please run /login`` -- which reaches the test as "the model never said
+    what we asked for", a failure that reads like a product defect and is
+    not one. An ``ANTHROPIC_API_KEY`` in the resolved env authenticates on its
+    own, so it satisfies the requirement without a credentials file.
+    """
+    if env.get("ANTHROPIC_API_KEY"):
+        return None
+    config_dir = env.get("CLAUDE_CONFIG_DIR")
+    if not config_dir:
+        return None
+    credentials = os.path.join(config_dir, ".credentials.json")
+    if not os.path.exists(credentials):
+        return f"claudewheel profile {profile!r} has no credentials file"
+    try:
+        with open(credentials) as handle:
+            stored = json.load(handle)
+    except (OSError, ValueError) as exc:
+        return f"claudewheel profile {profile!r} has unreadable credentials: {exc}"
+    if not stored.get("claudeAiOauth"):
+        return f"claudewheel profile {profile!r} is signed out of the Claude CLI"
+    return None
 
 
 @pytest.fixture(autouse=True)
