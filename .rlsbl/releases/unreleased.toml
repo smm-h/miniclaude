@@ -2,11 +2,29 @@
 format_version = 1
 # Version bump type: patch, minor, major, infra, or prerelease
 #   prerelease: advance an existing pre-release (0.6.0-beta.0 -> -beta.1)
-bump = ""
+bump = "minor"
 # Short description of this release (required)
-description = ""
+description = "Starting a fresh session has a name of its own, and every flag says whether it is required."
 # Optional context explaining why these changes were made
-context = ""
+context = """
+strictcli 0.41 makes presence a declaration rather than something the framework
+infers, and it replaces the mutex group with a member-spelled choice flag.
+Adopting both changed two things about `miniclaude repl`.
+
+Which session the REPL runs was previously two independent flags plus an
+unnamed third state: `--resume <id>`, `--continue-session`, and whatever
+happened when neither was passed. The handler checked that pair by hand, so a
+third alternative would have meant a third branch in that check. It is now one
+selection over three named members, `--new-session` included. Every command
+line that worked before works unchanged -- `--no-continue-session` included --
+and passing two members is the framework's refusal.
+
+The empty-string sentinel is gone from both commands. `--cwd` and `--seed`
+declared `default=""` and their handlers read absence back out of the empty
+string, so `miniclaude mock --seed ""` quietly took a random seed where it
+should have refused. Absence is absence now, and the empty string is a value
+that does not parse.
+"""
 # Pre-release channel: alpha, beta, rc, or stable (ordered;
 # demotion is an error). With patch/minor/major it ENTERS the
 # channel (0.5.2 + minor + alpha -> 0.6.0-alpha.0); with
