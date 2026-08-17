@@ -1,42 +1,64 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "defaults": {
-    "schema_version": 1,
+    "schema_version": 2,
     "app": {
       "env_prefix": null,
       "config": false,
+      "config_format": "json",
+      "config_path": null,
+      "config_conflict_mode": "cli-wins",
+      "proc_observe_allowlist": [],
       "global_flags": [],
       "commands": {},
       "groups": {},
       "deprecated": {},
-      "tag_contracts": {}
+      "tag_contracts": {},
+      "checks": {},
+      "config_fields": {},
+      "infra": {}
     },
     "flag": {
       "short": null,
-      "default": null,
       "env": null,
-      "choices": null,
-      "repeatable": false,
-      "unique": false,
       "env_separator": null,
+      "prefixed": true,
+      "choices": null,
+      "elect_by": null,
+      "unique": false,
+      "conflict_mode": null,
       "negatable": null,
-      "hidden": false
+      "nullable": false
     },
     "arg": {
-      "type": "str",
-      "required": true,
-      "default": null,
       "variadic": false,
       "choices": null
     },
+    "choice": {
+      "flags": []
+    },
+    "choice_record": {
+      "help": null
+    },
     "command": {
+      "consequential": false,
+      "dry_run_supported": true,
+      "dry_run_unsupported_reason": null,
+      "update_of": null,
+      "write_mode": null,
+      "payload_schema": null,
+      "owns_stdout": false,
       "passthrough": false,
       "flags": [],
+      "flag_sets": [],
       "args": [],
       "tags": [],
       "constraints": [],
       "hidden": false,
-      "interactive": false
+      "interactive": false,
+      "config_fields": [],
+      "grants": [],
+      "forwarding": null
     },
     "group": {
       "commands": {},
@@ -44,6 +66,18 @@
       "deprecated": {},
       "tags": [],
       "hidden": false
+    },
+    "config_field": {
+      "default": null,
+      "bound_commands": []
+    },
+    "check": {
+      "scope": null
+    },
+    "infra": {
+      "roots": [],
+      "handshakes": [],
+      "connections": []
     }
   },
   "project_id": "miniclaude",
@@ -63,58 +97,117 @@
       "flags": [
         {
           "name": "profile",
-          "type": "str",
-          "help": "claudewheel profile to use (required)"
+          "help": "claudewheel profile to use",
+          "value_schema": {
+            "type": "string"
+          },
+          "presence": "required"
         },
         {
           "name": "model",
-          "type": "str",
-          "help": "Model to use, e.g. sonnet, haiku (required)"
+          "help": "Model to use, e.g. sonnet, haiku",
+          "value_schema": {
+            "type": "string"
+          },
+          "presence": "required"
         },
         {
           "name": "permission-mode",
-          "type": "str",
-          "help": "Permission mode (required)",
+          "help": "Permission mode",
+          "value_schema": {
+            "type": "string",
+            "enum": [
+              "default",
+              "acceptEdits",
+              "plan",
+              "bypassPermissions",
+              "dontAsk",
+              "auto"
+            ]
+          },
+          "presence": "required",
           "choices": [
-            "default",
-            "acceptEdits",
-            "plan",
-            "bypassPermissions",
-            "dontAsk",
-            "auto"
+            {
+              "value": "default",
+              "help": "ask before every edit and command"
+            },
+            {
+              "value": "acceptEdits",
+              "help": "accept file edits without asking"
+            },
+            {
+              "value": "plan",
+              "help": "plan only -- propose, never act"
+            },
+            {
+              "value": "bypassPermissions",
+              "help": "ask for nothing at all"
+            },
+            {
+              "value": "dontAsk",
+              "help": "act without asking, refusing what needs consent"
+            },
+            {
+              "value": "auto",
+              "help": "let Claude Code pick the mode"
+            }
           ]
         },
         {
           "name": "cwd",
-          "type": "str",
-          "help": "Working directory (default: current)",
-          "default": ""
+          "help": "Working directory. Omitted, the REPL runs in the current directory.",
+          "value_schema": {
+            "type": "string"
+          },
+          "presence": "optional"
         },
         {
-          "name": "resume",
-          "type": "str",
-          "help": "Resume a previous session by ID",
-          "default": ""
-        },
-        {
-          "name": "continue-session",
-          "type": "bool",
-          "help": "Continue the most recent session",
-          "default": false,
-          "negatable": true
+          "name": "session",
+          "help": "Which session the REPL runs",
+          "presence": "default",
+          "default": {
+            "choice": "new-session"
+          },
+          "choices": [
+            {
+              "name": "resume",
+              "help": "Resume a previous session by ID",
+              "flags": [
+                {
+                  "name": "value",
+                  "help": "ID of the session to resume",
+                  "value_schema": {
+                    "type": "string"
+                  },
+                  "presence": "required"
+                }
+              ]
+            },
+            {
+              "name": "continue-session",
+              "help": "Continue the most recent session"
+            },
+            {
+              "name": "new-session",
+              "help": "Start a fresh session"
+            }
+          ],
+          "elect_by": "member-flags"
         }
       ]
     },
     "mock": {
       "name": "mock",
-      "help": "Interactive REPL against a mock session for TUI testing \u2014 no Claude CLI needed.",
+      "help": "Interactive REPL against a mock session for TUI testing — no Claude CLI needed.",
       "effect": "mutating",
       "flags": [
         {
           "name": "seed",
-          "type": "str",
-          "help": "Random seed (integer) for reproducible content; empty picks a random one",
-          "default": ""
+          "help": "Random seed (integer) for reproducible content. Omitted, one is picked at random.",
+          "value_schema": {
+            "type": "string"
+          },
+          "presence": "optional"
         }
       ]
     }
