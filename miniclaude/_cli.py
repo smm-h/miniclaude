@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import sys
+from typing import assert_never
 
 import strictcli
 from strictcli import Context
@@ -39,67 +40,102 @@ def cmd_version(ctx: Context) -> None:
     print(__version__)
 
 
-# --resume and --continue-session are both optional but mutually exclusive.
-# strictcli's MutexGroup forces "exactly one required", which is wrong here, so
-# the constraint is enforced manually in the handler.
+# Which session the REPL runs is an exactly-one selection over three named
+# alternatives, so it is a member-spelled choice flag: each member IS its own
+# flag, and the argv the previous releases accepted is unchanged. What changes
+# is that starting fresh has a name of its own -- `--new-session` -- instead of
+# being the state left over when neither of the other two was typed, and that
+# the mutual exclusion is the framework's refusal rather than a hand-written
+# check inside the handler.
+@strictcli.choice("resume", help="Resume a previous session by ID")
+class ResumeSession:
+    value: str = strictcli.member_value(help="ID of the session to resume")
+
+
+@strictcli.choice("continue-session", help="Continue the most recent session")
+class ContinueSession:
+    pass
+
+
+@strictcli.choice("new-session", help="Start a fresh session")
+class NewSession:
+    pass
+
+
+SessionChoice = ResumeSession | ContinueSession | NewSession
+
+
 # mutating: spawns a real Claude Code subprocess, which reads and writes files
 # under --cwd, runs shell commands, calls the network, spends money and
 # persists a session transcript. It also appends to ~/.miniclaude/history.
 @app.command("repl", effect="mutating", help="Start the interactive fullscreen REPL")
-@strictcli.flag("profile", type=str, help="claudewheel profile to use (required)")
-@strictcli.flag("model", type=str, help="Model to use, e.g. sonnet, haiku (required)")
+@strictcli.flag("profile", type=str, presence="required", help="claudewheel profile to use")
+@strictcli.flag("model", type=str, presence="required", help="Model to use, e.g. sonnet, haiku")
 @strictcli.flag(
     "permission-mode",
     type=str,
-    choices=["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"],
-    help="Permission mode (required)",
+    presence="required",
+    choices=[
+        strictcli.Choice("default", help="ask before every edit and command"),
+        strictcli.Choice("acceptEdits", help="accept file edits without asking"),
+        strictcli.Choice("plan", help="plan only -- propose, never act"),
+        strictcli.Choice("bypassPermissions", help="ask for nothing at all"),
+        strictcli.Choice("dontAsk", help="act without asking, refusing what needs consent"),
+        strictcli.Choice("auto", help="let Claude Code pick the mode"),
+    ],
+    help="Permission mode",
 )
-@strictcli.flag("cwd", type=str, default="", help="Working directory (default: current)")
-@strictcli.flag("resume", type=str, default="", help="Resume a previous session by ID")
 @strictcli.flag(
-    "continue-session",
-    type=bool,
-    default=False,
-    help="Continue the most recent session",
+    "cwd",
+    type=str,
+    presence="optional",
+    help="Working directory. Omitted, the REPL runs in the current directory.",
+)
+@strictcli.choice_flag(
+    "session",
+    help="Which session the REPL runs",
+    elect_by="member-flags",
+    choices=[ResumeSession, ContinueSession, NewSession],
+    default=NewSession(),
 )
 def cmd_repl(
     ctx: Context,
     profile: str,
     model: str,
     permission_mode: str,
-    cwd: str = "",
-    resume: str = "",
-    continue_session: bool = False,
+    session: SessionChoice,
+    cwd: str | None = None,
 ) -> int | None:
     from claudestream import AsyncSession, SessionConfig, SessionResolution
 
     from miniclaude._dialogs import PromptToolkitInteraction
     from miniclaude._repl import Repl
 
-    if resume and continue_session:
-        print(
-            "error: --resume and --continue-session are mutually exclusive",
-            file=sys.stderr,
-        )
-        return 1
-
     resolution = None
-    if continue_session:
-        resolution = SessionResolution(
-            name=None,
-            session_id=None,
-            resume_session_id=None,
-            continue_last=True,
-            fork=False,
-        )
+    resume_session_id = None
+    match session:
+        case ResumeSession(value=session_id):
+            resume_session_id = session_id
+        case ContinueSession():
+            resolution = SessionResolution(
+                name=None,
+                session_id=None,
+                resume_session_id=None,
+                continue_last=True,
+                fork=False,
+            )
+        case NewSession():
+            pass
+        case _:
+            assert_never(session)
 
     config = SessionConfig(
         model=model,
         profile=profile,
-        cwd=cwd or None,
+        cwd=cwd,
         permission_mode=permission_mode,
         intercept_permissions=True,
-        resume_session_id=resume or None,
+        resume_session_id=resume_session_id,
         session_resolution=resolution,
     )
 
@@ -120,12 +156,12 @@ def cmd_repl(
     return None
 
 
-def _resolve_seed(seed: str) -> int:
-    """Resolve a --seed flag to an int. Empty string picks a random seed.
+def _resolve_seed(seed: str | None) -> int:
+    """Resolve a --seed flag to an int. Absence picks a random seed.
 
-    Raises ValueError when a non-empty seed does not parse as an integer.
+    Raises ValueError when a supplied seed does not parse as an integer.
     """
-    if seed:
+    if seed is not None:
         return int(seed)
     import random
 
@@ -144,10 +180,10 @@ def _resolve_seed(seed: str) -> int:
 @strictcli.flag(
     "seed",
     type=str,
-    default="",
-    help="Random seed (integer) for reproducible content; empty picks a random one",
+    presence="optional",
+    help="Random seed (integer) for reproducible content. Omitted, one is picked at random.",
 )
-def cmd_mock(ctx: Context, seed: str = "") -> int | None:
+def cmd_mock(ctx: Context, seed: str | None = None) -> int | None:
     from miniclaude._dialogs import PromptToolkitInteraction
     from miniclaude._mock import MockSession
     from miniclaude._repl import Repl

@@ -337,10 +337,22 @@ def test_resolve_seed_parses_int():
     assert _resolve_seed("0") == 0
 
 
-def test_resolve_seed_empty_is_random_in_range():
+def test_resolve_seed_absent_is_random_in_range():
+    """Absence picks the seed, and absence is now ``None`` rather than ``""``.
+
+    ``--seed`` declared ``default=""`` and this function read the empty string
+    back as "nothing was passed", so ``--seed ""`` silently got a random seed
+    instead of a refusal. The flag declares ``presence="optional"`` now, so the
+    empty string is a value like any other -- and it does not parse.
+    """
     for _ in range(5):
-        s = _resolve_seed("")
+        s = _resolve_seed(None)
         assert 0 <= s < 2**31
+
+
+def test_resolve_seed_empty_string_is_a_value_that_does_not_parse():
+    with pytest.raises(ValueError, match="invalid literal"):
+        _resolve_seed("")
 
 
 def test_resolve_seed_bad_raises():

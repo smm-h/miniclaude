@@ -38,16 +38,24 @@ Example:
 miniclaude repl --profile default --model sonnet --permission-mode default
 ```
 
-| Flag | Required | Description |
+| Flag | Presence | Description |
 | --- | --- | --- |
-| `--profile <str>` | yes | claudewheel profile to use |
-| `--model <str>` | yes | model to use, e.g. `sonnet`, `haiku` |
-| `--permission-mode <str>` | yes | one of `default`, `acceptEdits`, `plan`, `bypassPermissions`, `dontAsk`, `auto` |
-| `--cwd <str>` | no | working directory (default: current) |
-| `--resume <str>` | no | resume a previous session by ID |
-| `--continue-session` / `--no-continue-session` | no | continue the most recent session (default: off) |
+| `--profile <str>` | required | claudewheel profile to use |
+| `--model <str>` | required | model to use, e.g. `sonnet`, `haiku` |
+| `--permission-mode <str>` | required | one of `default`, `acceptEdits`, `plan`, `bypassPermissions`, `dontAsk`, `auto` |
+| `--cwd <str>` | optional | working directory; omitted, the REPL runs in the current directory |
 
-`--resume` and `--continue-session` are mutually exclusive. Run `miniclaude version` to print the version.
+Which session the REPL runs is one selection over three named alternatives —
+pass exactly one, or none and get a new session:
+
+| Flag | Effect |
+| --- | --- |
+| `--resume <session-id>` | resume that previous session |
+| `--continue-session` | continue the most recent session |
+| `--new-session` | start a fresh session (what you get by passing none of the three) |
+
+Passing two of them is refused by name. Run `miniclaude version` to print the
+version.
 
 ## In-session
 

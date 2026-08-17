@@ -7,7 +7,13 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "claudestream",
-    "strictcli>=0.36.0",
+    # Floor, not a pin. 0.41.0 makes presence a mandatory declaration, bans a
+    # value default on a mutating command, replaces bare `choices=` entries
+    # with records and retires MutexGroup in favour of member-spelled choice
+    # flags; 0.41.1 lets a member of a member-spelled choice carry a short.
+    # `_cli.py` is written against all of it, and an older strictcli has no
+    # `presence=` keyword at all.
+    "strictcli>=0.41.1",
     "prompt-toolkit",
 ]
 keywords = ["rlsbl"]
